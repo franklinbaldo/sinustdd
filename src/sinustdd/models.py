@@ -1,4 +1,4 @@
-"""Core models for causal TDD cycles, witnesses, and observer violations."""
+"""Core models for causal TDD cycles, witnesses, specification provenance, and violations."""
 
 from __future__ import annotations
 
@@ -7,6 +7,19 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class SpecificationSource(StrEnum):
+    """Provenance origin of the intention driving a TDD cycle."""
+
+    ISSUE = "issue"
+    RFC = "rfc"
+    GHERKIN = "gherkin"
+    ACCEPTANCE_CRITERIA = "acceptance_criteria"
+    BUG_REPORT = "bug_report"
+    EXISTING_TEST = "existing_test"
+    FREEFORM = "freeform"
+    OTHER = "other"
 
 
 class Phase(StrEnum):
@@ -79,6 +92,9 @@ class Cycle(BaseModel):
     cycle_id: str
     phase: Phase = Phase.IDLE
     baseline_commit: str
+    specification_source: SpecificationSource = SpecificationSource.FREEFORM
+    specification_reference: str = ""
+    test_spec_id: str | None = None
     baseline_witness: BaselineWitness | None = None
     red_witness: RedWitness | None = None
     green_witness: GreenWitness | None = None
