@@ -50,3 +50,11 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: sinustdd-dogfood-gate
+        name: require complete causal cycle before push
+        entry: uv run --no-sync python -m sinustdd.dogfood_gate --base-ref origin/main
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

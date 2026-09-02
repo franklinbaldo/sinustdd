@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -48,6 +50,10 @@ jobs:
 
       - name: Run Pytest
         run: uv run pytest -v
+
+      - name: SinusTDD causal completion gate
+        if: github.event_name == 'pull_request'
+        run: uv run python -m sinustdd.dogfood_gate --base-ref origin/main
 
   test-lower-bounds:
     runs-on: ubuntu-latest
