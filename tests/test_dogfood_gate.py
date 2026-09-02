@@ -41,7 +41,13 @@ def _init_repo(root: Path) -> None:
     _git(root, "switch", "-c", "feature")
 
 
-def _write_complete_cycle(root: Path, cycle_id: str, baseline_ref: str) -> None:
+def _write_complete_cycle(
+    root: Path,
+    cycle_id: str,
+    baseline_ref: str,
+    red_ref: str | None = None,
+    green_ref: str | None = None,
+) -> None:
     write_phase_evidence(
         root=root,
         cycle_id=cycle_id,
@@ -53,14 +59,14 @@ def _write_complete_cycle(root: Path, cycle_id: str, baseline_ref: str) -> None:
         root=root,
         cycle_id=cycle_id,
         phase=Phase.RED,
-        repository_ref=baseline_ref,
+        repository_ref=red_ref or baseline_ref,
         payload={"failed_tests": ["test_new"]},
     )
     write_phase_evidence(
         root=root,
         cycle_id=cycle_id,
         phase=Phase.GREEN,
-        repository_ref=baseline_ref,
+        repository_ref=green_ref or red_ref or baseline_ref,
         payload={"tests_passed": ["test_old", "test_new"]},
     )
 
@@ -113,3 +119,57 @@ def test_gate_rejects_complete_cycle_from_unrelated_history(tmp_path: Path) -> N
     assert not result.passed
     assert "baseline ref" in result.message
     assert "not an ancestor" in result.message
+
+
+def test_gate_rejects_invalid_red_or_green_refs(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    baseline_ref = _git_output(tmp_path, "rev-parse", "main")
+    source = tmp_path / "src" / "feature.py"
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+
+    cycle_id = "cycle-invalid-red"
+    _write_complete_cycle(
+        tmp_path,
+        cycle_id,
+        baseline_ref,
+        red_ref="deadbeef",
+        green_ref=baseline_ref,
+    )
+    _commit_all(tmp_path, "change with invalid red ref")
+
+    result = check_pr_ready(tmp_path, "main")
+
+    assert not result.passed
+    assert "red ref" in result.message
+
+
+def test_gate_rejects_out_of_order_git_history(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    baseline_ref = _git_output(tmp_path, "rev-parse", "main")
+
+    marker = tmp_path / "tests" / "test_marker.py"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("def test_marker(): assert True\n", encoding="utf-8")
+    _commit_all(tmp_path, "red checkpoint")
+    red_ref = _git_output(tmp_path, "rev-parse", "HEAD")
+
+    source = tmp_path / "src" / "feature.py"
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    _commit_all(tmp_path, "green checkpoint")
+    green_ref = _git_output(tmp_path, "rev-parse", "HEAD")
+
+    cycle_id = "cycle-reversed"
+    _write_complete_cycle(
+        tmp_path,
+        cycle_id,
+        baseline_ref,
+        red_ref=green_ref,
+        green_ref=red_ref,
+    )
+    _commit_all(tmp_path, "evidence with reversed refs")
+
+    result = check_pr_ready(tmp_path, "main")
+
+    assert not result.passed
+    assert "red ref" in result.message
+    assert "not an ancestor of green ref" in result.message
