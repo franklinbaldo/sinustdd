@@ -2,7 +2,7 @@
 
 > **sinustdd proves that the test became red before the code made it green.**
 
-`sinustdd` is an opinionated verification and protocol state machine designed to enforce genuine Test-Driven Development (TDD) causal discipline on AI agents through verifiable phase transitions.
+`sinustdd` is an opinionated verification and protocol state machine designed to enforce genuine Test-Driven Development (TDD) causal discipline on AI agents through verifiable phase transitions and silent automatic observation.
 
 ---
 
@@ -40,6 +40,23 @@ Traditional static test gates fail with AI agents because LLMs frequently:
 3. **🔵 Refactor Phase ($\theta = 2\pi$):**
    - $\text{behavior\_before} == \text{behavior\_after}$ ($\text{Passing} = 100\%$).
    - Code structure improves without altering external contracts.
+
+---
+
+## 🛰️ Automatic Observer Mode
+
+The preferred agent integration is passive. The agent simply writes code and tests naturally.
+
+In **observer mode**, `sinustdd` continuously observes Git diffs, test hashes, and pytest results, following a strict **silence-on-success** contract:
+- Valid phase transitions are recognized and recorded silently as **OKF evidence**.
+- **Ambiguity is not a violation.** If the state is interim, `sinustdd` stays quiet.
+- The agent is **only interrupted when a demonstrated invariant violation occurs** (e.g., modifying production before a Red witness exists, or weakening an assertion).
+
+### 🔔 Notification Adapters
+
+Violations are emitted as structured events (`ViolationEvent`):
+- `code`, `cycle_id`, `inferred_phase`, `expected_invariant`, `observed_evidence`, `suggested_recovery`.
+- Adapters can deliver violations via local callbacks, MCP notifications, pre-commit hooks, or CI annotations.
 
 ---
 

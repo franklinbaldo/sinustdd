@@ -1,4 +1,4 @@
-"""Core models for Sinusoidal TDD Harmonic State Machine."""
+"""Core models for causal TDD cycles, witnesses, and observer violations."""
 
 from __future__ import annotations
 
@@ -31,11 +31,17 @@ class Phase(StrEnum):
         return mapping[self]
 
 
+class Transition(BaseModel):
+    from_phase: Phase
+    to_phase: Phase
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class RedWitness(BaseModel):
     """Immutable proof that a test legitimately failed against baseline production."""
 
-    test_files: list[str]
-    failed_tests: list[str]
+    test_files: list[str] = Field(default_factory=list)
+    failed_tests: list[str] = Field(default_factory=list)
     failure_fingerprint: str
     baseline_commit: str
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -44,8 +50,8 @@ class RedWitness(BaseModel):
 class GreenWitness(BaseModel):
     """Immutable proof that production changes resolved the red failure with frozen tests."""
 
-    production_files_modified: list[str]
-    tests_passed: list[str]
+    production_files_modified: list[str] = Field(default_factory=list)
+    tests_passed: list[str] = Field(default_factory=list)
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -57,6 +63,20 @@ class Cycle(BaseModel):
     baseline_commit: str
     red_witness: RedWitness | None = None
     green_witness: GreenWitness | None = None
+    transitions: list[Transition] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PhaseEvidence(BaseModel):
+    """Append-only OKF evidence emitted whenever a cycle crosses a phase boundary."""
+
+    schema_version: int = 1
+    cycle_id: str
+    phase: Phase
+    repository_ref: str
+    payload: dict[str, Any]
+    previous_evidence_sha256: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    sha256: str
