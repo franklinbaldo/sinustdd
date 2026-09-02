@@ -123,7 +123,7 @@ def verify_ledger(root: Path, cycle_id: str) -> bool:
         m_prev = re.search(r'previous_evidence_sha256:\s*["\']?([^"\'\n]+)["\']?', text)
         m_ref = re.search(r'repository_ref:\s*["\']?([^"\'\n]+)["\']?', text)
 
-        # Extract payload JSON block
+        # Extract standard triple-backtick payload JSON block
         m_json = re.search(r"`json\n(.*?)\n`", text, re.DOTALL)
         if not m_sha or not m_ref or not m_json:
             return False
