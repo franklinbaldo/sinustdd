@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class SpecificationSource(StrEnum):
     """Provenance origin of the intention driving a TDD cycle."""
 
+    UNSPECIFIED = "unspecified"
     ISSUE = "issue"
     RFC = "rfc"
     GHERKIN = "gherkin"
@@ -27,9 +28,10 @@ class IntentRecord(BaseModel):
 
     source_reference: str = ""  # e.g., "RFC-0042", "Issue #123", "prompt"
     source_excerpt: str = ""  # Optional verbatim excerpt from source
-    interpretation: str  # What the agent/human understood needs to happen
-    intended_change: str = ""  # What code/architecture will be modified
-    intended_proof: str = ""  # What test or proof will falsify/verify this
+    intent: str  # Direct textual understanding of the intended change and proof
+    interpretation: str = ""  # Optional detailed interpretation
+    intended_change: str = ""  # Optional architectural target
+    intended_proof: str = ""  # Optional falsifying test target
 
 
 class OutcomeReflection(BaseModel):
@@ -111,7 +113,7 @@ class Cycle(BaseModel):
     cycle_id: str
     phase: Phase = Phase.IDLE
     baseline_commit: str
-    specification_source: SpecificationSource = SpecificationSource.FREEFORM
+    specification_source: SpecificationSource = SpecificationSource.UNSPECIFIED
     specification_reference: str = ""
     intent_record: IntentRecord | None = None
     outcome_reflection: OutcomeReflection | None = None
