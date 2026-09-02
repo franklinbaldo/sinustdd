@@ -82,7 +82,7 @@ def _slugify(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Ecosystem Test Planners (pytest, vitest, cargo)
+# Ecosystem Test Planners (pytest, vitest, cargo, lean)
 # ---------------------------------------------------------------------------
 
 
@@ -179,10 +179,37 @@ class CargoPlanner:
         )
 
 
+class LeanPlanner:
+    """Planner for Lean 4 formal proof obligations (theorems without unsound escapes)."""
+
+    def plan_test(self, spec: TestSpec) -> MaterializedTest:
+        mod_name = _slugify(spec.target_unit or "feature")
+        thm_name = f"thm_{_slugify(spec.spec_id)}"
+        target_file = f"{mod_name}.lean"
+
+        preconditions = " ".join(f"({_slugify(c)} : Prop)" for c in spec.given)
+        outcomes = " ∧ ".join(spec.then) if spec.then else "True"
+
+        template = (
+            f"/-- Scenario: {spec.scenario_ref} -/\n"
+            f"theorem {thm_name} {preconditions} : {outcomes} := by\n"
+            f"  -- Formal proof obligation\n"
+        )
+
+        return MaterializedTest(
+            spec_ref=spec.spec_id,
+            test_id=thm_name,
+            target_file=target_file,
+            code_template=template,
+            kind="regression_guard" if spec.is_regression_guard else "primary_red",
+        )
+
+
 _PLANNERS: dict[str, type] = {
     "pytest": PytestPlanner,
     "vitest": VitestPlanner,
     "cargo": CargoPlanner,
+    "lean": LeanPlanner,
 }
 
 

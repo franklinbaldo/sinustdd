@@ -22,6 +22,25 @@ class SpecificationSource(StrEnum):
     OTHER = "other"
 
 
+class IntentRecord(BaseModel):
+    """Freeform, lightweight intent registration before starting a TDD cycle."""
+
+    source_reference: str = ""  # e.g., "RFC-0042", "Issue #123", "prompt"
+    source_excerpt: str = ""  # Optional verbatim excerpt from source
+    interpretation: str  # What the agent/human understood needs to happen
+    intended_change: str = ""  # What code/architecture will be modified
+    intended_proof: str = ""  # What test or proof will falsify/verify this
+
+
+class OutcomeReflection(BaseModel):
+    """Self-reflection recorded upon cycle completion (Socratic 'Know Thyself')."""
+
+    diverged_from_intent: bool = False
+    reflection_notes: str = ""
+    discovered_insights: str = ""
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Phase(StrEnum):
     IDLE = "idle"
     BASELINE = "baseline"
@@ -94,6 +113,8 @@ class Cycle(BaseModel):
     baseline_commit: str
     specification_source: SpecificationSource = SpecificationSource.FREEFORM
     specification_reference: str = ""
+    intent_record: IntentRecord | None = None
+    outcome_reflection: OutcomeReflection | None = None
     test_spec_id: str | None = None
     baseline_witness: BaselineWitness | None = None
     red_witness: RedWitness | None = None

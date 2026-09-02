@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sinustdd.adapters import TestAdapter, get_adapter
+from sinustdd.adapters import VerificationAdapter, get_adapter
 from sinustdd.behavior import BehaviorMode, TestSpec
 from sinustdd.diff import (
     classify_diff,
@@ -20,6 +20,8 @@ from sinustdd.models import (
     BaselineWitness,
     Cycle,
     GreenWitness,
+    IntentRecord,
+    OutcomeReflection,
     Phase,
     RedWitness,
     RefactorWitness,
@@ -37,7 +39,7 @@ class SinusTDDEngine:
     def __init__(
         self,
         root: Path,
-        adapter: TestAdapter | None = None,
+        adapter: VerificationAdapter | None = None,
         behavior_mode: BehaviorMode = BehaviorMode.OFF,
     ) -> None:
         self.root = root
@@ -68,6 +70,10 @@ class SinusTDDEngine:
             "behavior_mode": self.behavior_mode.value,
             "specification_source": cycle.specification_source.value,
             "specification_reference": cycle.specification_reference,
+            "intent_record": (cycle.intent_record.model_dump() if cycle.intent_record else None),
+            "outcome_reflection": (
+                cycle.outcome_reflection.model_dump() if cycle.outcome_reflection else None
+            ),
             "test_spec_id": cycle.test_spec_id,
             "baseline_commit": cycle.baseline_commit,
             "baseline_witness": (
@@ -86,6 +92,7 @@ class SinusTDDEngine:
         *,
         specification_source: SpecificationSource = SpecificationSource.FREEFORM,
         specification_reference: str = "",
+        intent_record: IntentRecord | None = None,
         test_spec: TestSpec | None = None,
     ) -> Cycle:
         active = self.store.load_active_cycle()
@@ -101,7 +108,7 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # 1. Verify baseline suite is 100% GREEN via TestAdapter
+        # 1. Verify baseline suite is 100% GREEN via VerificationAdapter
         test_run = self.adapter.run_tests(self.root)
         if not test_run.passed:
             msg = (
@@ -124,6 +131,8 @@ class SinusTDDEngine:
         payload["specification_source"] = specification_source.value
         if specification_reference:
             payload["specification_reference"] = specification_reference
+        if intent_record:
+            payload["intent_record"] = intent_record.model_dump()
         if test_spec:
             payload["test_spec"] = test_spec.model_dump()
 
@@ -144,6 +153,7 @@ class SinusTDDEngine:
             baseline_commit=head,
             specification_source=specification_source,
             specification_reference=specification_reference,
+            intent_record=intent_record,
             test_spec_id=test_spec.spec_id if test_spec else None,
             baseline_witness=baseline_wit,
             transitions=[Transition(from_phase=Phase.IDLE, to_phase=Phase.BASELINE)],
@@ -277,7 +287,7 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # 3. Verify Entire Suite (Baseline + New Test) is Green via TestAdapter
+        # 3. Verify Entire Suite (Baseline + New Test) is Green via VerificationAdapter
         test_run = self.adapter.run_tests(self.root)
         if not test_run.passed:
             msg = (
@@ -345,7 +355,7 @@ class SinusTDDEngine:
         self.store.save_active_cycle(cycle)
         return refactor_wit
 
-    def complete(self) -> Cycle:
+    def complete(self, reflection: OutcomeReflection | None = None) -> Cycle:
         cycle = self.store.load_active_cycle()
         if cycle is None:
             msg = "No active cycle to complete."
@@ -364,6 +374,7 @@ class SinusTDDEngine:
         from_phase = cycle.phase
         cycle.phase = Phase.COMPLETED
         cycle.completed_at = datetime.now(UTC)
+        cycle.outcome_reflection = reflection
         cycle.transitions.append(Transition(from_phase=from_phase, to_phase=Phase.COMPLETED))
         self.store.archive_cycle(cycle)
         return cycle
