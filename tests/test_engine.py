@@ -7,7 +7,12 @@ import pytest
 from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.behavior import BehaviorMode, TestSpec
 from sinustdd.engine import SinusTDDEngine, StateTransitionError
-from sinustdd.models import Phase, SpecificationSource
+from sinustdd.models import (
+    IntentRecord,
+    OutcomeReflection,
+    Phase,
+    SpecificationSource,
+)
 
 
 def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -20,7 +25,7 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert st["phase"] == Phase.IDLE
     assert st["theta"] == 0.0
 
-    # 2. Begin cycle (mock passing baseline)
+    # 2. Begin cycle (mock passing baseline) with IntentRecord
     def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
         return TestRun(
             adapter_name="pytest",
@@ -31,13 +36,22 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         )
 
     monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
+    intent = IntentRecord(
+        source_reference="RFC-0042",
+        interpretation="Reject expired tokens while keeping valid tokens functional",
+        intended_change="src/auth.py verification logic",
+        intended_proof="tests/test_feature.py::test_new",
+    )
     cycle = engine.begin(
         specification_source=SpecificationSource.RFC,
-        specification_reference="RFC-1042",
+        specification_reference="RFC-0042",
+        intent_record=intent,
     )
     assert cycle.phase == Phase.BASELINE
     assert cycle.specification_source == SpecificationSource.RFC
-    assert cycle.specification_reference == "RFC-1042"
+    assert cycle.specification_reference == "RFC-0042"
+    assert cycle.intent_record is not None
+    assert "Reject expired tokens" in cycle.intent_record.interpretation
     assert engine.status()["active"]
     assert len(cycle.evidence_chain) == 1
 
@@ -118,10 +132,17 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert active_c3 is not None
     assert active_c3.transitions[-1].from_phase == Phase.GREEN
 
-    # 7. Complete cycle
-    completed_cycle = engine.complete()
+    # 7. Complete cycle with Socratic OutcomeReflection
+    reflection = OutcomeReflection(
+        diverged_from_intent=False,
+        reflection_notes="Implemented exact RFC expiration semantics without regression",
+        discovered_insights="Session store requires atomic TTL checks",
+    )
+    completed_cycle = engine.complete(reflection=reflection)
     assert completed_cycle.phase == Phase.COMPLETED
     assert not engine.status()["active"]
+    assert completed_cycle.outcome_reflection is not None
+    assert not completed_cycle.outcome_reflection.diverged_from_intent
     assert completed_cycle.transitions[-1].from_phase == Phase.REFACTOR
 
 

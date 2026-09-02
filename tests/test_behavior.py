@@ -94,3 +94,10 @@ def test_adapter_planners_multi_ecosystem() -> None:
     assert t_rs.target_file == "tests/auth_test.rs"
     assert "#[test]" in t_rs.code_template
     assert "fn test_spec_expired_token_is_rejected()" in t_rs.code_template
+
+    # 4. Lean Planner (Formal Proof Obligation)
+    plan_lean = compile_behavior_to_tdd(intent, [scenario], adapter_name="lean")
+    assert plan_lean.adapter_name == "lean"
+    t_lean = plan_lean.materialized_tests[0]
+    assert t_lean.target_file == "auth.lean"
+    assert "theorem thm_spec_expired_token_is_rejected" in t_lean.code_template
