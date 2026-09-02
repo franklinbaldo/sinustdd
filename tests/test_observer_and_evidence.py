@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from okf_parser.parser import parse_document
 
 from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.diff import DiffClassification
@@ -41,6 +42,10 @@ def test_write_phase_evidence_and_ledger_verification(tmp_path: Path) -> None:
         payload={"tests_passed": ["tests/test_1.py::test_init"]},
     )
     assert p1.is_file()
+    parsed = parse_document(p1)
+    assert parsed.frontmatter["tests_passed"] == ["tests/test_1.py::test_init"]
+    assert "payload" not in parsed.frontmatter
+    assert "```json" not in parsed.body
     assert verify_ledger(tmp_path, "cycle-abc")
 
     # 2. Write red evidence chained to baseline
@@ -52,6 +57,7 @@ def test_write_phase_evidence_and_ledger_verification(tmp_path: Path) -> None:
         payload={"failed_tests": ["tests/test_2.py::test_fail"]},
     )
     assert p2.is_file()
+    assert h1 != h2
     assert verify_ledger(tmp_path, "cycle-abc")
 
     # 3. Duplicate write should error
