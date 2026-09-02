@@ -1,151 +1,89 @@
 # sinustdd 🌊
 
-> **Sinusoidal TDD Harmonic State Machine for Autonomous Coding Agents**
+> **sinustdd proves that the test became red before the code made it green.**
 
-`sinustdd` is an opinionated verification and orchestration protocol for proving that a test became red before production code made it green.
+`sinustdd` is an opinionated verification and protocol state machine designed to enforce genuine Test-Driven Development (TDD) causal discipline on AI agents through verifiable phase transitions and silent automatic observation.
 
-## Causal TDD cycle
+---
 
-The sinusoid is a representation of a discrete causal state machine. The state machine is authoritative; the wave makes the cycle legible.
+## 🌊 The Causal TDD Thesis
 
-### BASELINE (θ = 0)
+Traditional static test gates fail with AI agents because LLMs frequently:
+1. **Write tests and code simultaneously**, bypassing red-phase verification.
+2. **Weaken test assertions** when an implementation proves difficult ("moving the goalposts").
+3. **Write tests that never failed**, providing zero causal proof that the test prevents regressions.
 
-The cycle starts from a repository snapshot `B` with a green test suite. The baseline records the Git reference and the known passing behavior before the oscillation begins.
-
-### RED (θ ∈ [0, π])
-
-Two rigid invariants apply:
-
-1. `production_diff(B, R) == ∅` — production code may not change.
-2. At least one new test must demonstrably fail against production baseline `B`.
-
-Crossing into Green requires a **Red Witness** containing the exact test identity, baseline reference, failure output and a stable failure fingerprint.
-
-### GREEN (θ ∈ [π, 2π])
-
-The Red tests become the frozen target. Production code may now change, but the behavioral target recorded by Red may not be weakened.
-
-A **Green Witness** is emitted only when the Red witness passes and all tests that were passing at baseline continue to pass.
-
-### REFACTOR (θ = 2π)
-
-Refactor may change production structure and test/fixture organization while preserving the behavior demonstrated by the complete known test and witness set. `sinustdd` does not claim universal program equivalence; it proves preservation relative to the observable contract it has recorded.
-
-After the Refactor witness is accepted, `2π ≡ 0` and the next cycle may begin.
-
-## Automatic observer mode
-
-The preferred agent integration is passive. An agent should not need to call `sinustdd red` or `sinustdd green` at every step.
-
-In **observer mode**, `sinustdd` continuously derives the most likely harmonic phase from objective repository events:
-
-- Git tree and working-tree changes;
-- classification of test, fixture and production diffs;
-- hashes of the test targets captured at Red;
-- pytest collection and outcomes;
-- the existing OKF evidence chain.
-
-A typical trajectory is inferred as follows:
+`sinustdd` models the TDD harmonic cycle $\theta \in [0, 2\pi]$ as a strict transition state machine with verifiable witnesses:
 
 ```text
-all tests green + clean baseline
-            │
-            ▼
-       BASELINE witness
-            │
-new/changed test + no production change
-            │
-            ▼
-failing new test against B ─────► RED witness
-            │
-production changes + Red target frozen
-            │
-            ▼
-Red target + baseline suite green ─► GREEN witness
-            │
-structure changes + behavior stays green
-            │
-            ▼
-       REFACTOR witness
-            │
-            └──────────────► next cycle
+               (θ = π)
+           RED WITNESS
+       [test fails against
+        baseline production]
+              /       \
+ (θ = 0)     /         \     (θ = 2π ≡ 0)
+ BASELINE ──            ── GREEN WITNESS ──── REFACTOR ──► CYCLE N+1
+    (B)                     [tests frozen,
+                             production G
+                             makes all pass]
 ```
 
-The observer follows a **silence-on-success** contract: valid phase changes are recorded automatically as OKF evidence without interrupting the coding agent. The agent is notified only when `sinustdd` can demonstrate a protocol violation or when continued inference is impossible without an explicit decision.
+### 🔁 Invariant Phase Contracts
 
-Examples of hard violations include:
+1. **🔴 Red Phase ($\theta = 0 \to \pi$):**
+   - $\text{production\_diff}(B, R) = \emptyset$ (Source code is locked).
+   - $\exists \text{ new\_test} : \text{fail}(\text{new\_test}, B)$ $\to$ Records **`RedWitness`** (failure fingerprint).
+2. **🟢 Green Phase ($\theta = \pi \to 2\pi$):**
+   - $\text{test\_assertion\_diff}(R, G) = \emptyset$ (Test assertions are frozen; goalposts cannot move).
+   - $\text{production\_diff}(B, G) \neq \emptyset$ (Production code is implemented).
+   - $\text{new\_tests} = \text{PASS} \land \text{previous\_tests} = \text{PASS}$ $\to$ Records **`GreenWitness`**.
+3. **🔵 Refactor Phase ($\theta = 2\pi$):**
+   - $\text{behavior\_before} == \text{behavior\_after}$ ($\text{Passing} = 100\%$).
+   - Code structure improves without altering external contracts.
 
-- production code changes before a Red witness exists;
-- a Red test is changed or weakened after its witness was captured;
-- a claimed Green state does not make the Red target pass;
-- a previously passing baseline test regresses;
-- an existing evidence artifact is rewritten and breaks the hash chain.
+---
 
-Ambiguity is not itself a violation. When several phases remain compatible with the observed events, the observer keeps collecting evidence rather than guessing intent.
+## 🛰️ Automatic Observer Mode
 
-### Notification adapters
+The preferred agent integration is passive. The agent simply writes code and tests naturally.
 
-Violations are emitted as structured events rather than coupled to one agent runtime:
+In **observer mode**, `sinustdd` continuously observes Git diffs, test hashes, and pytest results, following a strict **silence-on-success** contract:
+- Valid phase transitions are recognized and recorded silently as **OKF evidence**.
+- **Ambiguity is not a violation.** If the state is interim, `sinustdd` stays quiet.
+- The agent is **only interrupted when a demonstrated invariant violation occurs** (e.g., modifying production before a Red witness exists, or weakening an assertion).
 
-```text
-ViolationEvent
-├── code
-├── cycle_id
-├── inferred_phase
-├── expected_invariant
-├── observed_evidence
-├── evidence_path
-└── suggested_recovery
-```
+### 🔔 Notification Adapters
 
-The core exposes callbacks/subscribers for these events. Adapters may map them to a local callback, hook output, MCP notification, agent `send_message` facility, CI annotation, or another orchestration channel. The protocol core records evidence and detects violations; delivery remains an adapter concern.
+Violations are emitted as structured events (`ViolationEvent`):
+- `code`, `cycle_id`, `inferred_phase`, `expected_invariant`, `observed_evidence`, `suggested_recovery`.
+- Adapters can deliver violations via local callbacks, MCP notifications, pre-commit hooks, or CI annotations.
 
-This makes the normal experience intentionally quiet: **observe, prove, persist; interrupt only on violation.**
+---
 
-## Evidence is part of the repository
+## 🚀 Interface: CLI (Cyclopts) & FastMCP
 
-Every phase transition emits durable evidence. Evidence is not hidden in an agent session or an external database: by default it is authored as an **Open Knowledge Format (OKF)** Markdown concept and stored in the repository.
+`sinustdd` exposes both a human/agent-friendly CLI powered by **Cyclopts** and an **MCP Server** powered by **FastMCP** for native integration into AI Agent harnesses.
 
-```text
-.sinustdd/
-├── session.json                 # ephemeral operational cursor; not evidence
-└── evidence/
-    └── <cycle-id>/
-        ├── baseline.md
-        ├── red.md
-        ├── green.md
-        └── refactor.md
-```
-
-The evidence bundle is validated with `okf-parser` at write time. Each evidence concept contains the repository ref, cycle/phase identity, witness payload, its SHA-256 digest, and the digest of the previous phase evidence. This gives each cycle an append-only, Git-versioned causal chain.
-
-The JSON session file is only a resumable cursor for the currently active cycle. A cycle is auditable from the OKF evidence committed to the repository even after the agent session disappears.
-
-## Runtime shape
-
-The initial runtime is organized around:
-
-- `models.py` — phases, cycles, transitions, witnesses and violation events;
-- `evidence.py` — OKF evidence emission, hash chaining and validation;
-- `store.py` — ephemeral active-session persistence;
-- `diff.py` — repository diff classification;
-- `runner.py` — test execution and failure fingerprint extraction;
-- `engine.py` — explicit transition validation;
-- `observer.py` — automatic phase inference and violation detection;
-- `notifications.py` — callback/subscriber boundary for violation delivery;
-- `cli.py` — explicit commands plus `watch`/observer entry points.
-
-The explicit CLI remains useful for CI, debugging and deterministic orchestration, but autonomous agents should normally run under observer mode.
-
-## Installation
-
+### CLI
 ```bash
-uv add sinustdd
+sinustdd begin           # Snapshot baseline B and start Cycle N
+sinustdd red             # Verify test failures on B and record RedWitness
+sinustdd green           # Verify production diff makes witness pass with frozen tests
+sinustdd refactor        # Allow structural refactoring while preserving 100% green
+sinustdd complete        # Seal Cycle N with complete audit trail
+sinustdd status          # View current harmonic phase and witnesses
+sinustdd serve           # Start FastMCP server over stdio
 ```
 
-```bash
-sinustdd info
-```
+### FastMCP Tools
+- `sinustdd_status()`: Get current phase ($\theta$), active cycle, and witness status (`readOnlyHint=True`).
+- `sinustdd_begin()`: Open a new harmonic TDD cycle.
+- `sinustdd_red()`: Validate and lock red witness.
+- `sinustdd_green()`: Validate green transition.
+- `sinustdd_refactor()`: Transition to refactor phase.
+- `sinustdd_complete()`: Finalize cycle and seal proof.
+
+---
 
 ## License
 

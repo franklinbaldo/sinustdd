@@ -1,4 +1,4 @@
-"""Core models for causal TDD cycles and their repository evidence."""
+"""Core models for causal TDD cycles, witnesses, and observer violations."""
 
 from __future__ import annotations
 
@@ -10,11 +10,25 @@ from pydantic import BaseModel, Field
 
 
 class Phase(StrEnum):
+    IDLE = "idle"
     BASELINE = "baseline"
     RED = "red"
     GREEN = "green"
     REFACTOR = "refactor"
     COMPLETED = "completed"
+
+    @property
+    def theta(self) -> float:
+        """Harmonic phase angle in radians [0, 2pi]."""
+        mapping = {
+            Phase.IDLE: 0.0,
+            Phase.BASELINE: 0.0,
+            Phase.RED: 3.141592653589793,  # pi
+            Phase.GREEN: 4.71238898038469,  # 1.5 pi
+            Phase.REFACTOR: 6.283185307179586,  # 2 pi
+            Phase.COMPLETED: 6.283185307179586,
+        }
+        return mapping[self]
 
 
 class Transition(BaseModel):
@@ -24,32 +38,39 @@ class Transition(BaseModel):
 
 
 class RedWitness(BaseModel):
-    test_id: str
-    failure_output: str
+    """Immutable proof that a test legitimately failed against baseline production."""
+
+    test_files: list[str] = Field(default_factory=list)
+    failed_tests: list[str] = Field(default_factory=list)
     failure_fingerprint: str
-    baseline_ref: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    baseline_commit: str
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class GreenWitness(BaseModel):
-    test_id: str
-    passed: bool = True
-    production_diff_stat: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    """Immutable proof that production changes resolved the red failure with frozen tests."""
+
+    production_files_modified: list[str] = Field(default_factory=list)
+    tests_passed: list[str] = Field(default_factory=list)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Cycle(BaseModel):
+    """Complete harmonic TDD cycle record."""
+
     cycle_id: str
-    phase: Phase = Phase.BASELINE
-    baseline_ref: str
-    baseline_tests_passed: bool
+    phase: Phase = Phase.IDLE
+    baseline_commit: str
     red_witness: RedWitness | None = None
     green_witness: GreenWitness | None = None
     transitions: list[Transition] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PhaseEvidence(BaseModel):
-    """Append-only evidence emitted whenever a cycle crosses a phase boundary."""
+    """Append-only OKF evidence emitted whenever a cycle crosses a phase boundary."""
 
     schema_version: int = 1
     cycle_id: str
