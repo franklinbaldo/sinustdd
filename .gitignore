@@ -35,3 +35,6 @@ htmlcov/
 
 .githooks/pre-commit
 .githooks/pre-push
+
+# sinustdd's active cursor is ephemeral. `.sinustdd/evidence/**` is intentionally tracked.
+.sinustdd/session.json
