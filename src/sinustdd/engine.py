@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sinustdd.adapters import TestAdapter, get_adapter
 from sinustdd.diff import (
     classify_diff,
     compute_test_files_hashes,
@@ -23,7 +24,6 @@ from sinustdd.models import (
     RefactorWitness,
     Transition,
 )
-from sinustdd.runner import run_tests
 from sinustdd.store import SessionStore
 
 
@@ -32,9 +32,10 @@ class StateTransitionError(Exception):
 
 
 class SinusTDDEngine:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, adapter: TestAdapter | None = None) -> None:
         self.root = root
         self.store = SessionStore(root)
+        self.adapter = adapter or get_adapter(root)
 
     def status(self) -> dict[str, Any]:
         cycle = self.store.load_active_cycle()
@@ -68,23 +69,32 @@ class SinusTDDEngine:
             msg = f"Cycle {active.cycle_id} is already in progress (phase: {active.phase})."
             raise StateTransitionError(msg)
 
-        # 1. Verify baseline suite is 100% GREEN before starting
-        test_result = run_tests(self.root)
-        if not test_result.passed:
+        # 1. Verify baseline suite is 100% GREEN via TestAdapter
+        test_run = self.adapter.run_tests(self.root)
+        if not test_run.passed:
             msg = (
                 f"Cannot begin TDD cycle: baseline suite has failing tests! "
-                f"Failed: {test_result.failed_tests}. The baseline must be completely green."
+                f"Failed: {test_run.tests_failed}. The baseline must be completely green."
             )
             raise StateTransitionError(msg)
 
         head = get_head_commit(self.root)
         cycle_id = f"cycle-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
-        suite_sig = hashlib.sha256("\n".join(sorted(test_result.passed_tests)).encode()).hexdigest()
+        suite_sig = hashlib.sha256("\n".join(sorted(test_run.tests_passed)).encode()).hexdigest()
         baseline_wit = BaselineWitness(
             baseline_commit=head,
-            tests_passed=test_result.passed_tests,
+            tests_passed=test_run.tests_passed,
             suite_fingerprint=suite_sig,
+        )
+
+        # 2. Obligatory OKF Evidence emission (No catch-and-pass)
+        ev_path, _ = write_phase_evidence(
+            root=self.root,
+            cycle_id=cycle_id,
+            phase=Phase.BASELINE,
+            repository_ref=head,
+            payload=baseline_wit.model_dump(),
         )
 
         cycle = Cycle(
@@ -93,20 +103,8 @@ class SinusTDDEngine:
             baseline_commit=head,
             baseline_witness=baseline_wit,
             transitions=[Transition(from_phase=Phase.IDLE, to_phase=Phase.BASELINE)],
+            evidence_chain=[str(ev_path)],
         )
-
-        # Write OKF Evidence for Baseline
-        try:
-            ev_path, _ = write_phase_evidence(
-                root=self.root,
-                cycle_id=cycle_id,
-                phase=Phase.BASELINE,
-                repository_ref=head,
-                payload=baseline_wit.model_dump(),
-            )
-            cycle.evidence_chain.append(str(ev_path))
-        except Exception:
-            pass
 
         self.store.save_active_cycle(cycle)
         return cycle
@@ -138,9 +136,9 @@ class SinusTDDEngine:
             raise StateTransitionError(msg)
 
         test_files = diff.test_files_added + diff.test_files_modified
-        test_result = run_tests(self.root)
+        test_run = self.adapter.run_tests(self.root)
 
-        if test_result.passed or not test_result.failed_tests:
+        if test_run.passed or not test_run.tests_failed:
             msg = (
                 "Tautological test detected! The new test PASSED against baseline production code. "
                 "A valid RED phase requires at least one failing test demonstrating "
@@ -148,14 +146,16 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # Ensure the failure is explicitly tied to the modified/added test files
+        # Ensure failure origin is rigorously tied to the modified/added test files
         relevant_failures = [
-            f for f in test_result.failed_tests if any(t_file in f for t_file in test_files)
+            f
+            for f in test_run.tests_failed
+            if any(t_file in f.replace("\\", "/") for t_file in test_files)
         ]
         if not relevant_failures:
             msg = (
                 "Disconnected failure detected! The failing tests "
-                f"({test_result.failed_tests}) do not originate from the tests "
+                f"({test_run.tests_failed}) do not originate from the tests "
                 f"introduced in this phase ({test_files})."
             )
             raise StateTransitionError(msg)
@@ -167,25 +167,23 @@ class SinusTDDEngine:
             test_files=test_files,
             test_files_hashes=test_hashes,
             failed_tests=relevant_failures,
-            failure_fingerprint=test_result.failure_fingerprint,
+            failure_fingerprint=test_run.failure_fingerprint,
             baseline_commit=cycle.baseline_commit,
         )
 
+        ev_path, _ = write_phase_evidence(
+            root=self.root,
+            cycle_id=cycle.cycle_id,
+            phase=Phase.RED,
+            repository_ref=get_head_commit(self.root),
+            payload=witness.model_dump(),
+        )
+
+        from_phase = cycle.phase
         cycle.phase = Phase.RED
         cycle.red_witness = witness
-        cycle.transitions.append(Transition(from_phase=cycle.phase, to_phase=Phase.RED))
-
-        try:
-            ev_path, _ = write_phase_evidence(
-                root=self.root,
-                cycle_id=cycle.cycle_id,
-                phase=Phase.RED,
-                repository_ref=get_head_commit(self.root),
-                payload=witness.model_dump(),
-            )
-            cycle.evidence_chain.append(str(ev_path))
-        except Exception:
-            pass
+        cycle.transitions.append(Transition(from_phase=from_phase, to_phase=Phase.RED))
+        cycle.evidence_chain.append(str(ev_path))
 
         self.store.save_active_cycle(cycle)
         return witness
@@ -221,11 +219,11 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # 3. Verify Entire Suite (Baseline + New Test) is Green
-        test_result = run_tests(self.root)
-        if not test_result.passed:
+        # 3. Verify Entire Suite (Baseline + New Test) is Green via TestAdapter
+        test_run = self.adapter.run_tests(self.root)
+        if not test_run.passed:
             msg = (
-                f"Tests are still failing! Failed: {test_result.failed_tests}. "
+                f"Tests are still failing! Failed: {test_run.tests_failed}. "
                 "GREEN phase requires all tests to pass."
             )
             raise StateTransitionError(msg)
@@ -233,24 +231,22 @@ class SinusTDDEngine:
         witness = GreenWitness(
             production_files_modified=diff.production_files_added + diff.production_files_modified,
             test_files_hashes_verified=current_test_hashes,
-            tests_passed=test_result.passed_tests,
+            tests_passed=test_run.tests_passed,
         )
 
+        ev_path, _ = write_phase_evidence(
+            root=self.root,
+            cycle_id=cycle.cycle_id,
+            phase=Phase.GREEN,
+            repository_ref=get_head_commit(self.root),
+            payload=witness.model_dump(),
+        )
+
+        from_phase = cycle.phase
         cycle.phase = Phase.GREEN
         cycle.green_witness = witness
-        cycle.transitions.append(Transition(from_phase=cycle.phase, to_phase=Phase.GREEN))
-
-        try:
-            ev_path, _ = write_phase_evidence(
-                root=self.root,
-                cycle_id=cycle.cycle_id,
-                phase=Phase.GREEN,
-                repository_ref=get_head_commit(self.root),
-                payload=witness.model_dump(),
-            )
-            cycle.evidence_chain.append(str(ev_path))
-        except Exception:
-            pass
+        cycle.transitions.append(Transition(from_phase=from_phase, to_phase=Phase.GREEN))
+        cycle.evidence_chain.append(str(ev_path))
 
         self.store.save_active_cycle(cycle)
         return witness
@@ -261,27 +257,26 @@ class SinusTDDEngine:
             msg = "Cannot transition to REFACTOR before achieving GREEN phase."
             raise StateTransitionError(msg)
 
-        test_result = run_tests(self.root)
-        if not test_result.passed:
-            msg = f"Refactoring broke the test suite! Failed: {test_result.failed_tests}."
+        test_run = self.adapter.run_tests(self.root)
+        if not test_run.passed:
+            msg = f"Refactoring broke the test suite! Failed: {test_run.tests_failed}."
             raise StateTransitionError(msg)
 
-        refactor_wit = RefactorWitness(tests_passed=test_result.passed_tests)
+        refactor_wit = RefactorWitness(tests_passed=test_run.tests_passed)
+
+        ev_path, _ = write_phase_evidence(
+            root=self.root,
+            cycle_id=cycle.cycle_id,
+            phase=Phase.REFACTOR,
+            repository_ref=get_head_commit(self.root),
+            payload=refactor_wit.model_dump(),
+        )
+
+        from_phase = cycle.phase
         cycle.phase = Phase.REFACTOR
         cycle.refactor_witness = refactor_wit
-        cycle.transitions.append(Transition(from_phase=cycle.phase, to_phase=Phase.REFACTOR))
-
-        try:
-            ev_path, _ = write_phase_evidence(
-                root=self.root,
-                cycle_id=cycle.cycle_id,
-                phase=Phase.REFACTOR,
-                repository_ref=get_head_commit(self.root),
-                payload=refactor_wit.model_dump(),
-            )
-            cycle.evidence_chain.append(str(ev_path))
-        except Exception:
-            pass
+        cycle.transitions.append(Transition(from_phase=from_phase, to_phase=Phase.REFACTOR))
+        cycle.evidence_chain.append(str(ev_path))
 
         self.store.save_active_cycle(cycle)
         return refactor_wit
@@ -295,13 +290,14 @@ class SinusTDDEngine:
             msg = f"Cannot complete cycle in phase '{cycle.phase}'. Must be GREEN or REFACTOR."
             raise StateTransitionError(msg)
 
-        test_result = run_tests(self.root)
-        if not test_result.passed:
+        test_run = self.adapter.run_tests(self.root)
+        if not test_run.passed:
             msg = "Cannot complete cycle: tests are currently failing."
             raise StateTransitionError(msg)
 
+        from_phase = cycle.phase
         cycle.phase = Phase.COMPLETED
         cycle.completed_at = datetime.now(UTC)
-        cycle.transitions.append(Transition(from_phase=cycle.phase, to_phase=Phase.COMPLETED))
+        cycle.transitions.append(Transition(from_phase=from_phase, to_phase=Phase.COMPLETED))
         self.store.archive_cycle(cycle)
         return cycle

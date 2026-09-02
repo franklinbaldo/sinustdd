@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.cli import info, status
+from sinustdd.engine import SinusTDDEngine
 from sinustdd.mcp import mcp
 
 
@@ -13,19 +15,21 @@ def test_cli_commands_coverage(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from sinustdd.cli import begin, complete, green, red, refactor
-    from sinustdd.engine import SinusTDDEngine
 
-    test_engine = SinusTDDEngine(tmp_path)
+    adapter = PytestAdapter()
+    test_engine = SinusTDDEngine(tmp_path, adapter=adapter)
     monkeypatch.setattr("sinustdd.cli._engine", lambda: test_engine)
 
-    def mock_run_tests_clean(cwd: Path):
-        from sinustdd.runner import TestExecutionResult
-
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_a.py::test_init"], output="OK"
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_a.py::test_init"],
+            output="OK",
         )
 
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
 
     info()
     status()
@@ -40,19 +44,18 @@ def test_cli_commands_coverage(
 
         return DiffClassification(test_files_added=["tests/test_a.py"], has_test_changes=True)
 
-    def mock_run_tests_failed(cwd: Path):
-        from sinustdd.runner import TestExecutionResult
-
-        return TestExecutionResult(
+    def mock_run_tests_failed(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
             passed=False,
             returncode=1,
-            failed_tests=["tests/test_a.py::test_x"],
+            tests_failed=["tests/test_a.py::test_x"],
             output="FAILED",
             failure_fingerprint="123",
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff_red)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_failed)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_failed)
     red()
 
     # Mock green pass
@@ -66,15 +69,17 @@ def test_cli_commands_coverage(
             has_production_changes=True,
         )
 
-    def mock_run_tests_passed(cwd: Path):
-        from sinustdd.runner import TestExecutionResult
-
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_a.py::test_x"], output="PASSED"
+    def mock_run_tests_passed(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_a.py::test_x"],
+            output="PASSED",
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff_green)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_passed)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_passed)
     green()
     refactor()
     complete()
@@ -84,7 +89,6 @@ def test_cli_commands_coverage(
 
 
 def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from sinustdd.engine import SinusTDDEngine
     from sinustdd.mcp import (
         sinustdd_begin,
         sinustdd_complete,
@@ -94,7 +98,8 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         sinustdd_status,
     )
 
-    test_engine = SinusTDDEngine(tmp_path)
+    adapter = PytestAdapter()
+    test_engine = SinusTDDEngine(tmp_path, adapter=adapter)
     monkeypatch.setattr("sinustdd.mcp._engine", lambda: test_engine)
 
     # 1. Status idle
@@ -102,14 +107,16 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert not st["active"]
 
     # 2. Begin (mock clean baseline)
-    def mock_run_tests_clean(cwd: Path):
-        from sinustdd.runner import TestExecutionResult
-
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_b.py::test_init"], output="OK"
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_b.py::test_init"],
+            output="OK",
         )
 
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     b = sinustdd_begin()
     assert b["phase"] == "baseline"
 
@@ -119,19 +126,18 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
         return DiffClassification(test_files_added=["tests/test_b.py"], has_test_changes=True)
 
-    def mock_run_tests_failed(cwd: Path):
-        from sinustdd.runner import TestExecutionResult
-
-        return TestExecutionResult(
+    def mock_run_tests_failed(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
             passed=False,
             returncode=1,
-            failed_tests=["tests/test_b.py::test_y"],
+            tests_failed=["tests/test_b.py::test_y"],
             output="FAILED",
             failure_fingerprint="456",
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff_red)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_failed)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_failed)
     r = sinustdd_red()
     assert r["failed_tests"] == ["tests/test_b.py::test_y"]
 
@@ -146,15 +152,17 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
             has_production_changes=True,
         )
 
-    def mock_run_tests_passed(cwd: Path):
-        from sinustdd.runner import TestExecutionResult
-
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_b.py::test_y"], output="PASSED"
+    def mock_run_tests_passed(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_b.py::test_y"],
+            output="PASSED",
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff_green)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_passed)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_passed)
     g = sinustdd_green()
     assert "src/b.py" in g["production_files_modified"]
 

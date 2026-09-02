@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
+from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.diff import DiffClassification
 from sinustdd.evidence import verify_ledger, write_phase_evidence
 from sinustdd.models import Phase
 from sinustdd.observer import Observer, ViolationEvent
-from sinustdd.runner import TestExecutionResult
 
 
 def test_observer_subscription_and_notification() -> None:
@@ -71,23 +71,49 @@ def test_write_phase_evidence_and_ledger_verification(tmp_path: Path) -> None:
     assert not verify_ledger(tmp_path, "cycle-abc")
 
 
+def test_verify_ledger_gap_detection(tmp_path: Path) -> None:
+    """Gap attack: ledger has baseline and green but skips red."""
+    p_base, _ = write_phase_evidence(
+        root=tmp_path,
+        cycle_id="cycle-gap",
+        phase=Phase.BASELINE,
+        repository_ref="commit-1",
+        payload={"tests_passed": ["tests/test_1.py::test_ok"]},
+    )
+    # Manually write green skipping red
+    p_green, _ = write_phase_evidence(
+        root=tmp_path,
+        cycle_id="cycle-gap",
+        phase=Phase.GREEN,
+        repository_ref="commit-2",
+        payload={"tests_passed": ["tests/test_1.py::test_ok"]},
+    )
+    assert p_base.is_file()
+    assert p_green.is_file()
+    assert not verify_ledger(tmp_path, "cycle-gap")
+
+
 def test_observer_observe_once_flows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    obs = Observer(tmp_path)
+    adapter = PytestAdapter()
+    obs = Observer(tmp_path, adapter=adapter)
     delivered: list[ViolationEvent] = []
     obs.subscribe(lambda e: delivered.append(e))
 
     # 1. Idle repository clean -> auto begins baseline
-    def mock_run_tests_clean(cwd: Path):
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_old.py::test_ok"], output="OK"
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_old.py::test_ok"],
+            output="OK",
         )
 
     def mock_diff_clean(cwd: Path, base_ref: str | None = None):
         return DiffClassification()
 
-    monkeypatch.setattr("sinustdd.observer.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     monkeypatch.setattr("sinustdd.observer.classify_diff", mock_diff_clean)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
 
     res = obs.observe_once()
     assert res["transition_recorded"]
@@ -114,19 +140,19 @@ def test_observer_observe_once_flows(tmp_path: Path, monkeypatch: pytest.MonkeyP
     def mock_diff_red(cwd: Path, base_ref: str | None = None):
         return DiffClassification(test_files_added=["tests/test_new.py"], has_test_changes=True)
 
-    def mock_run_tests_red(cwd: Path):
-        return TestExecutionResult(
+    def mock_run_tests_red(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
             passed=False,
             returncode=1,
-            failed_tests=["tests/test_new.py::test_x"],
+            tests_failed=["tests/test_new.py::test_x"],
             output="FAILED",
             failure_fingerprint="sig123",
         )
 
     monkeypatch.setattr("sinustdd.observer.classify_diff", mock_diff_red)
-    monkeypatch.setattr("sinustdd.observer.run_tests", mock_run_tests_red)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_red)
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_diff_red)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_red)
 
     res_red = obs.observe_once()
     assert res_red["transition_recorded"]
@@ -143,9 +169,8 @@ def test_observer_observe_once_flows(tmp_path: Path, monkeypatch: pytest.MonkeyP
         )
 
     monkeypatch.setattr("sinustdd.observer.classify_diff", mock_diff_green)
-    monkeypatch.setattr("sinustdd.observer.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_diff_green)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
 
     res_green = obs.observe_once()
     assert res_green["transition_recorded"]
