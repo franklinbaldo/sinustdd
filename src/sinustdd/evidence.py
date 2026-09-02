@@ -178,6 +178,4 @@ def verify_ledger(root: Path, cycle_id: str) -> bool:
             return False
         previous_hash = cur_sha
 
-    if seen_phases and seen_phases != _PHASE_ORDER[: len(seen_phases)]:
-        return False
-    return True
+    return not (seen_phases and seen_phases != _PHASE_ORDER[: len(seen_phases)])
