@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from sinustdd.adapters import TestAdapter, get_adapter
+from sinustdd.behavior import BehaviorMode, TestSpec
 from sinustdd.diff import (
     classify_diff,
     compute_test_files_hashes,
@@ -22,6 +23,7 @@ from sinustdd.models import (
     Phase,
     RedWitness,
     RefactorWitness,
+    SpecificationSource,
     Transition,
 )
 from sinustdd.store import SessionStore
@@ -32,10 +34,16 @@ class StateTransitionError(Exception):
 
 
 class SinusTDDEngine:
-    def __init__(self, root: Path, adapter: TestAdapter | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        adapter: TestAdapter | None = None,
+        behavior_mode: BehaviorMode = BehaviorMode.OFF,
+    ) -> None:
         self.root = root
         self.store = SessionStore(root)
         self.adapter = adapter or get_adapter(root)
+        self.behavior_mode = behavior_mode
 
     def _verify_ledger_integrity(self, cycle_id: str) -> None:
         if not verify_ledger(self.root, cycle_id):
@@ -49,6 +57,7 @@ class SinusTDDEngine:
                 "active": False,
                 "phase": Phase.IDLE,
                 "theta": Phase.IDLE.theta,
+                "behavior_mode": self.behavior_mode.value,
                 "message": "No active TDD cycle. Run sinustdd begin to start.",
             }
         return {
@@ -56,6 +65,10 @@ class SinusTDDEngine:
             "cycle_id": cycle.cycle_id,
             "phase": cycle.phase,
             "theta": cycle.phase.theta,
+            "behavior_mode": self.behavior_mode.value,
+            "specification_source": cycle.specification_source.value,
+            "specification_reference": cycle.specification_reference,
+            "test_spec_id": cycle.test_spec_id,
             "baseline_commit": cycle.baseline_commit,
             "baseline_witness": (
                 cycle.baseline_witness.model_dump() if cycle.baseline_witness else None
@@ -68,10 +81,24 @@ class SinusTDDEngine:
             "evidence_chain": cycle.evidence_chain,
         }
 
-    def begin(self) -> Cycle:
+    def begin(
+        self,
+        *,
+        specification_source: SpecificationSource = SpecificationSource.FREEFORM,
+        specification_reference: str = "",
+        test_spec: TestSpec | None = None,
+    ) -> Cycle:
         active = self.store.load_active_cycle()
         if active is not None and active.phase != Phase.COMPLETED:
             msg = f"Cycle {active.cycle_id} is already in progress (phase: {active.phase})."
+            raise StateTransitionError(msg)
+
+        # Enforce BehaviorMode.REQUIRED check
+        if self.behavior_mode == BehaviorMode.REQUIRED and test_spec is None:
+            msg = (
+                "BehaviorMode.REQUIRED is active: Cannot begin cycle without a valid TestSpec. "
+                "Compile behavior scenarios to TestSpec or provide an explicit specification."
+            )
             raise StateTransitionError(msg)
 
         # 1. Verify baseline suite is 100% GREEN via TestAdapter
@@ -93,13 +120,20 @@ class SinusTDDEngine:
             suite_fingerprint=suite_sig,
         )
 
+        payload: dict[str, Any] = baseline_wit.model_dump()
+        payload["specification_source"] = specification_source.value
+        if specification_reference:
+            payload["specification_reference"] = specification_reference
+        if test_spec:
+            payload["test_spec"] = test_spec.model_dump()
+
         # 2. Obligatory OKF Evidence emission (No catch-and-pass)
         ev_path, _ = write_phase_evidence(
             root=self.root,
             cycle_id=cycle_id,
             phase=Phase.BASELINE,
             repository_ref=head,
-            payload=baseline_wit.model_dump(),
+            payload=payload,
         )
 
         self._verify_ledger_integrity(cycle_id)
@@ -108,6 +142,9 @@ class SinusTDDEngine:
             cycle_id=cycle_id,
             phase=Phase.BASELINE,
             baseline_commit=head,
+            specification_source=specification_source,
+            specification_reference=specification_reference,
+            test_spec_id=test_spec.spec_id if test_spec else None,
             baseline_witness=baseline_wit,
             transitions=[Transition(from_phase=Phase.IDLE, to_phase=Phase.BASELINE)],
             evidence_chain=[str(ev_path)],

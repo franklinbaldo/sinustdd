@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 
 from sinustdd.adapters import PytestAdapter, TestRun
+from sinustdd.behavior import BehaviorMode, TestSpec
 from sinustdd.engine import SinusTDDEngine, StateTransitionError
-from sinustdd.models import Phase
+from sinustdd.models import Phase, SpecificationSource
 
 
 def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,8 +31,13 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         )
 
     monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
-    cycle = engine.begin()
+    cycle = engine.begin(
+        specification_source=SpecificationSource.RFC,
+        specification_reference="RFC-1042",
+    )
     assert cycle.phase == Phase.BASELINE
+    assert cycle.specification_source == SpecificationSource.RFC
+    assert cycle.specification_reference == "RFC-1042"
     assert engine.status()["active"]
     assert len(cycle.evidence_chain) == 1
 
@@ -117,3 +123,42 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert completed_cycle.phase == Phase.COMPLETED
     assert not engine.status()["active"]
     assert completed_cycle.transitions[-1].from_phase == Phase.REFACTOR
+
+
+def test_behavior_mode_required_enforcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = PytestAdapter()
+    engine = SinusTDDEngine(tmp_path, adapter=adapter, behavior_mode=BehaviorMode.REQUIRED)
+
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_1.py::test_init"],
+            output="OK",
+        )
+
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
+
+    # 1. Attempt begin without test_spec -> Rejected!
+    with pytest.raises(StateTransitionError, match="BehaviorMode.REQUIRED is active"):
+        engine.begin()
+
+    # 2. Begin with valid TestSpec -> Accepted!
+    spec = TestSpec(
+        spec_id="spec_auth_login",
+        scenario_ref="Valid credentials login",
+        target_unit="auth",
+        given=["Valid user"],
+        when="Submits login",
+        then=["Receives JWT"],
+    )
+    cycle = engine.begin(
+        specification_source=SpecificationSource.ACCEPTANCE_CRITERIA,
+        specification_reference="JIRA-402",
+        test_spec=spec,
+    )
+    assert cycle.phase == Phase.BASELINE
+    assert cycle.test_spec_id == "spec_auth_login"

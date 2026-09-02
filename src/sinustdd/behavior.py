@@ -42,6 +42,7 @@ class BehaviorScenario(BaseModel):
 class TestSpec(BaseModel):
     """Language-agnostic falsifiable test specification (No code, pure contract)."""
 
+    __test__ = False
     spec_id: str
     scenario_ref: str
     target_unit: str
