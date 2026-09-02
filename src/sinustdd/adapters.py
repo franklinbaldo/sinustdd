@@ -75,6 +75,34 @@ class VerificationAdapter(ABC):
     def run_tests(self, root: Path, selection: list[str] | None = None) -> TestRun:
         """Execute the verification tool and return a normalized TestRun."""
 
+    def is_verification_artifact(self, filepath: str) -> bool:
+        """Return True if relative filepath represents a test / proof contract."""
+        fp = filepath.replace("\\", "/")
+        return (
+            fp.startswith("tests/")
+            or "test_" in fp
+            or "_test." in fp
+            or fp.endswith(".test.ts")
+            or fp.endswith(".spec.ts")
+            or fp.endswith(".test.js")
+            or fp.endswith(".spec.js")
+        )
+
+    def is_production_artifact(self, filepath: str) -> bool:
+        """Return True if relative filepath represents implementation / production code."""
+        fp = filepath.replace("\\", "/")
+        if self.is_verification_artifact(fp):
+            return False
+        return (
+            fp.startswith("src/")
+            or fp.startswith("lib/")
+            or fp.endswith(".py")
+            or fp.endswith(".ts")
+            or fp.endswith(".rs")
+            or fp.endswith(".go")
+            or fp.endswith(".lean")
+        )
+
 
 # Backward compatibility alias
 TestAdapter = VerificationAdapter
@@ -92,6 +120,16 @@ class PytestAdapter(VerificationAdapter):
         if (root / "tests").is_dir():
             confidence += 0.4
         return min(confidence, 1.0)
+
+    def is_verification_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        return fp.startswith("tests/") or "test_" in fp or fp.endswith("_test.py")
+
+    def is_production_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        if self.is_verification_artifact(fp):
+            return False
+        return fp.startswith("src/") or fp.endswith(".py")
 
     def run_tests(self, root: Path, selection: list[str] | None = None) -> TestRun:
         cmd = ["pytest", "-v", "--tb=short"]
@@ -172,6 +210,23 @@ class VitestAdapter(VerificationAdapter):
                 return 0.2
         return 0.0
 
+    def is_verification_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        return (
+            fp.startswith("tests/")
+            or "__tests__" in fp
+            or fp.endswith(".test.ts")
+            or fp.endswith(".spec.ts")
+            or fp.endswith(".test.js")
+            or fp.endswith(".spec.js")
+        )
+
+    def is_production_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        if self.is_verification_artifact(fp):
+            return False
+        return fp.startswith("src/") or fp.endswith(".ts") or fp.endswith(".js")
+
     def run_tests(self, root: Path, selection: list[str] | None = None) -> TestRun:
         cmd = ["npx", "vitest", "run"]
         if selection:
@@ -234,6 +289,16 @@ class CargoAdapter(VerificationAdapter):
         if (root / "Cargo.toml").is_file():
             return 0.9
         return 0.0
+
+    def is_verification_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        return fp.startswith("tests/") or fp.endswith("_test.rs")
+
+    def is_production_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        if self.is_verification_artifact(fp):
+            return False
+        return fp.startswith("src/") or fp.endswith(".rs")
 
     def run_tests(self, root: Path, selection: list[str] | None = None) -> TestRun:
         cmd = ["cargo", "test"]
@@ -301,6 +366,21 @@ class LeanAdapter(VerificationAdapter):
         if any(root.glob("*.lean")):
             confidence += 0.3
         return min(confidence, 1.0)
+
+    def is_verification_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        return (
+            fp.startswith("tests/")
+            or "spec" in fp
+            or fp.endswith("Spec.lean")
+            or fp.endswith("Test.lean")
+        )
+
+    def is_production_artifact(self, filepath: str) -> bool:
+        fp = filepath.replace("\\", "/")
+        if self.is_verification_artifact(fp):
+            return False
+        return fp.endswith(".lean")
 
     def extract_theorems_and_hashes(
         self, root: Path

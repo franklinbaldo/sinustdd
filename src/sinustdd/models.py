@@ -111,6 +111,7 @@ class Cycle(BaseModel):
     """Complete harmonic TDD cycle record."""
 
     cycle_id: str
+    label: str = ""  # Human-readable descriptive name (e.g., 'add CargoAdapter')
     phase: Phase = Phase.IDLE
     baseline_commit: str
     specification_source: SpecificationSource = SpecificationSource.UNSPECIFIED
