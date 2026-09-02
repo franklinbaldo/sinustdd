@@ -5,8 +5,12 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from sinustdd.adapters import VerificationAdapter
 
 
 class DiffClassification(BaseModel):
@@ -52,8 +56,13 @@ def compute_test_files_hashes(cwd: Path, test_files: list[str]) -> dict[str, str
     return hashes
 
 
-def classify_diff(cwd: Path, base_ref: str | None = None) -> DiffClassification:
-    """Classify modified and added files between working directory (or HEAD) and base_ref."""
+def classify_diff(
+    cwd: Path,
+    base_ref: str | None = None,
+    adapter: VerificationAdapter | None = None,
+    **_kwargs: Any,
+) -> DiffClassification:
+    """Classify modified/added files into verification and production artifacts via adapter."""
     cmd = ["diff", "--name-status"]
     if base_ref:
         cmd.append(base_ref)
@@ -68,8 +77,20 @@ def classify_diff(cwd: Path, base_ref: str | None = None) -> DiffClassification:
         status = parts[0][0]
         filepath = parts[-1].replace("\\", "/")
 
-        is_test = filepath.startswith("tests/") or "test_" in filepath or "_test.py" in filepath
-        is_prod = filepath.startswith("src/") or (filepath.endswith(".py") and not is_test)
+        if adapter:
+            is_test = adapter.is_verification_artifact(filepath)
+            is_prod = adapter.is_production_artifact(filepath)
+        else:
+            is_test = (
+                filepath.startswith("tests/")
+                or "test_" in filepath
+                or "_test." in filepath
+                or filepath.endswith(".test.ts")
+                or filepath.endswith(".spec.ts")
+            )
+            is_prod = filepath.startswith("src/") or (
+                filepath.endswith((".py", ".ts", ".rs", ".go", ".lean")) and not is_test
+            )
 
         if is_test:
             if status == "A":

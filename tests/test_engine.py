@@ -44,11 +44,13 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         intended_proof="tests/test_feature.py::test_new",
     )
     cycle = engine.begin(
+        label="reconcile expired tokens",
         specification_source=SpecificationSource.RFC,
         specification_reference="RFC-0042",
         intent_record=intent,
     )
     assert cycle.phase == Phase.BASELINE
+    assert cycle.label == "reconcile expired tokens"
     assert cycle.specification_source == SpecificationSource.RFC
     assert cycle.specification_reference == "RFC-0042"
     assert cycle.intent_record is not None
