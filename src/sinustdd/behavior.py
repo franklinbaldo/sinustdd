@@ -1,10 +1,10 @@
-"""Behavioral Intent, BDD Scenario modeling, and BDD -> TDD Compiler."""
+"""Behavioral Intent, BDD Scenario modeling, TestSpec contracts, and Adapter Planners."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -30,33 +30,164 @@ class BehaviorScenario(BaseModel):
     counterexamples: list[str] = Field(default_factory=list)  # Smallest falsifying examples
 
 
-class TestCandidate(BaseModel):
-    """A generated or mapped test candidate fulfilling a behavioral requirement."""
+class TestSpec(BaseModel):
+    """Language-agnostic falsifiable test specification (No code, pure contract)."""
+
+    spec_id: str
+    scenario_ref: str
+    target_unit: str
+    given: list[str]
+    when: str
+    then: list[str]
+    then_not: list[str] = Field(default_factory=list)
+    counterexample: str = ""
+    is_regression_guard: bool = False
+
+
+class MaterializedTest(BaseModel):
+    """A concrete, idiomatically rendered test file and symbol for an ecosystem."""
 
     __test__ = False
+    spec_ref: str
     test_id: str
-    suggested_file: str
-    kind: str = "primary_red"  # primary_red | regression_guard | counterexample
-    scenario_ref: str
-    code_skeleton: str = ""
+    target_file: str
+    code_template: str
+    kind: str = "primary_red"  # primary_red | regression_guard
 
 
 class TestPlan(BaseModel):
-    """Compilation output: mapped test candidates ready for SinusTDD causal proof."""
+    """Compilation output mapping TestSpecs to materialized tests across adapters."""
 
     __test__ = False
     feature: str
     adapter_name: str
-    primary_red_candidates: list[TestCandidate] = Field(default_factory=list)
-    regression_guards: list[TestCandidate] = Field(default_factory=list)
-    uncovered_scenarios: list[str] = Field(default_factory=list)
+    specs: list[TestSpec] = Field(default_factory=list)
+    materialized_tests: list[MaterializedTest] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _slugify(text: str) -> str:
+    cleaned = re.sub(r"[^\w\s-]", "", text).lower().strip()
+    return re.sub(r"[-\s]+", "_", cleaned)
+
+
+# ---------------------------------------------------------------------------
+# Ecosystem Test Planners (pytest, vitest, cargo)
+# ---------------------------------------------------------------------------
+
+
+class AdapterPlanner(Protocol):
+    def plan_test(self, spec: TestSpec) -> MaterializedTest: ...
+
+
+class PytestPlanner:
+    def plan_test(self, spec: TestSpec) -> MaterializedTest:
+        fn_name = f"test_{_slugify(spec.spec_id)}"
+        target_file = f"tests/test_{_slugify(spec.target_unit)}.py"
+
+        assertions = "\n".join(
+            f"    # Expect: {outcome}\n    # assert <actual> == {outcome}" for outcome in spec.then
+        )
+        forbidden = "\n".join(
+            f"    # Forbidden: {bad}\n    # assert <actual> != {bad}" for bad in spec.then_not
+        )
+
+        template = (
+            f"def {fn_name}() -> None:\n"
+            f'    """Scenario: {spec.scenario_ref}\n'
+            f"    Given: {', '.join(spec.given)}\n"
+            f"    When: {spec.when}\n"
+            f'    """\n'
+            f"{assertions}\n"
+        )
+        if forbidden:
+            template += f"{forbidden}\n"
+
+        return MaterializedTest(
+            spec_ref=spec.spec_id,
+            test_id=fn_name,
+            target_file=target_file,
+            code_template=template,
+            kind="regression_guard" if spec.is_regression_guard else "primary_red",
+        )
+
+
+class VitestPlanner:
+    def plan_test(self, spec: TestSpec) -> MaterializedTest:
+        suite_name = spec.target_unit or "feature"
+        target_file = f"tests/{_slugify(suite_name)}.test.ts"
+        test_title = spec.scenario_ref
+
+        assertions = "\n".join(
+            f"    // Expect: {outcome}\n    // expect(actual).toBe({outcome});"
+            for outcome in spec.then
+        )
+
+        template = (
+            f"test('{test_title}', () => {{\n"
+            f"  // Given: {', '.join(spec.given)}\n"
+            f"  // When: {spec.when}\n"
+            f"{assertions}\n"
+            f"}});\n"
+        )
+
+        return MaterializedTest(
+            spec_ref=spec.spec_id,
+            test_id=test_title,
+            target_file=target_file,
+            code_template=template,
+            kind="regression_guard" if spec.is_regression_guard else "primary_red",
+        )
+
+
+class CargoPlanner:
+    def plan_test(self, spec: TestSpec) -> MaterializedTest:
+        mod_name = _slugify(spec.target_unit or "feature")
+        fn_name = f"test_{_slugify(spec.spec_id)}"
+        target_file = f"tests/{mod_name}_test.rs"
+
+        assertions = "\n".join(
+            f"    // Expect: {outcome}\n    // assert_eq!(actual, {outcome});"
+            for outcome in spec.then
+        )
+
+        template = (
+            f"#[test]\n"
+            f"fn {fn_name}() {{\n"
+            f"    // Given: {', '.join(spec.given)}\n"
+            f"    // When: {spec.when}\n"
+            f"{assertions}\n"
+            f"}}\n"
+        )
+
+        return MaterializedTest(
+            spec_ref=spec.spec_id,
+            test_id=fn_name,
+            target_file=target_file,
+            code_template=template,
+            kind="regression_guard" if spec.is_regression_guard else "primary_red",
+        )
+
+
+_PLANNERS: dict[str, type] = {
+    "pytest": PytestPlanner,
+    "vitest": VitestPlanner,
+    "cargo": CargoPlanner,
+}
+
+
+def get_planner(adapter_name: str) -> AdapterPlanner:
+    planner_cls = _PLANNERS.get(adapter_name.lower(), PytestPlanner)
+    return planner_cls()
+
+
+# ---------------------------------------------------------------------------
+# Socratic Questionnaire
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class SocraticQuestion:
-    """Socratic inquiry guiding behavior specification without Gherkin jargon."""
-
     prompt: str
     target_field: str
     example: str
@@ -108,74 +239,64 @@ def elicit_socratic_prompts() -> list[dict[str, str]]:
     ]
 
 
-def _slugify(text: str) -> str:
-    cleaned = re.sub(r"[^\w\s-]", "", text).lower().strip()
-    return re.sub(r"[-\s]+", "_", cleaned)
+# ---------------------------------------------------------------------------
+# Behavior -> TestSpec -> TestPlan Compiler
+# ---------------------------------------------------------------------------
+
+
+def compile_behavior_to_test_specs(
+    intent: BehaviorIntent,
+    scenarios: list[BehaviorScenario],
+) -> list[TestSpec]:
+    """Compile behavioral scenarios into declarative, language-agnostic TestSpecs."""
+    specs: list[TestSpec] = []
+    target_mod = intent.target_module or intent.feature
+
+    for sc in scenarios:
+        # Primary Spec
+        primary_spec = TestSpec(
+            spec_id=f"spec_{_slugify(sc.name)}",
+            scenario_ref=sc.name,
+            target_unit=target_mod,
+            given=sc.context,
+            when=sc.action,
+            then=sc.expected_outcomes,
+            then_not=sc.forbidden_outcomes,
+            counterexample=sc.counterexamples[0] if sc.counterexamples else "",
+            is_regression_guard=False,
+        )
+        specs.append(primary_spec)
+
+        # Invariant Regression Guard Specs
+        for inv in sc.preserved_invariants:
+            guard_spec = TestSpec(
+                spec_id=f"guard_{_slugify(inv)}",
+                scenario_ref=sc.name,
+                target_unit=target_mod,
+                given=[f"Preserved invariant: {inv}"],
+                when="Standard operation",
+                then=[inv],
+                is_regression_guard=True,
+            )
+            specs.append(guard_spec)
+
+    return specs
 
 
 def compile_behavior_to_tdd(
     intent: BehaviorIntent,
     scenarios: list[BehaviorScenario],
     adapter_name: str = "pytest",
-    existing_tests: list[str] | None = None,
 ) -> TestPlan:
-    """Compile abstract BDD behavior scenarios into actionable, falsifiable TDD test candidates.
-
-    Deduplicates against already covered baseline tests and targets the primary Red gap.
-    """
-    known_tests = set(existing_tests or [])
-    primary_reds: list[TestCandidate] = []
-    regression_guards: list[TestCandidate] = []
-    uncovered: list[str] = []
-
-    target_mod_slug = _slugify(intent.target_module or intent.feature)
-    test_file = f"tests/test_{target_mod_slug}.py"
-
-    for sc in scenarios:
-        scenario_slug = _slugify(sc.name)
-        primary_test_id = f"test_{scenario_slug}"
-
-        # 1. Primary Red Candidate
-        if primary_test_id not in known_tests:
-            skeleton = (
-                f"def {primary_test_id}():\n"
-                f"    # Scenario: {sc.name}\n"
-                f"    # Action: {sc.action}\n"
-                f"    # Expected: {', '.join(sc.expected_outcomes)}\n"
-                f"    raise NotImplementedError('Behavior Red Witness pending implementation')\n"
-            )
-            primary_reds.append(
-                TestCandidate(
-                    test_id=primary_test_id,
-                    suggested_file=test_file,
-                    kind="primary_red",
-                    scenario_ref=sc.name,
-                    code_skeleton=skeleton,
-                )
-            )
-            uncovered.append(sc.name)
-
-        # 2. Preserved Invariant Regression Guards
-        for inv in sc.preserved_invariants:
-            inv_slug = _slugify(inv)
-            guard_id = f"test_preserves_{inv_slug}"
-            if guard_id not in known_tests:
-                guard_skeleton = f"def {guard_id}():\n    # Regression guard: {inv}\n    pass\n"
-                regression_guards.append(
-                    TestCandidate(
-                        test_id=guard_id,
-                        suggested_file=test_file,
-                        kind="regression_guard",
-                        scenario_ref=sc.name,
-                        code_skeleton=guard_skeleton,
-                    )
-                )
+    """Compile abstract BDD behavior scenarios into ecosystem-idiomatic MaterializedTests."""
+    specs = compile_behavior_to_test_specs(intent, scenarios)
+    planner = get_planner(adapter_name)
+    materialized = [planner.plan_test(sp) for sp in specs]
 
     return TestPlan(
         feature=intent.feature,
         adapter_name=adapter_name,
-        primary_red_candidates=primary_reds,
-        regression_guards=regression_guards,
-        uncovered_scenarios=uncovered,
-        metadata={"total_scenarios": len(scenarios)},
+        specs=specs,
+        materialized_tests=materialized,
+        metadata={"total_scenarios": len(scenarios), "total_specs": len(specs)},
     )
