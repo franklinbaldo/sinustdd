@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,3 +124,19 @@ def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
         f"causal completion gate satisfied by {', '.join(complete)}",
         tuple(cycle_ids),
     )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check whether a PR is causally ready to merge")
+    parser.add_argument("--base-ref", default="origin/main")
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+    args = parser.parse_args()
+
+    result = check_pr_ready(args.root.resolve(), args.base_ref)
+    marker = "✓" if result.passed else "✗"
+    print(f"{marker} {result.message}")
+    return 0 if result.passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
