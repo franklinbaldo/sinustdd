@@ -79,7 +79,7 @@ def _repository_ref(evidence_path: Path) -> str | None:
 
 
 def _is_ancestor(root: Path, ancestor: str, descendant: str = "HEAD") -> bool:
-    """Return whether a Git ref belongs to descendant ancestry; fail closed otherwise."""
+    """Return whether ancestor precedes descendant in Git history; fail closed otherwise."""
     proc = subprocess.run(
         ["git", "merge-base", "--is-ancestor", ancestor, descendant],
         cwd=root,
@@ -91,18 +91,44 @@ def _is_ancestor(root: Path, ancestor: str, descendant: str = "HEAD") -> bool:
     return proc.returncode == 0
 
 
+def _verify_git_phase_order(
+    root: Path,
+    cycle_id: str,
+    phase_paths: dict[Phase, Path | None],
+) -> str | None:
+    refs: dict[Phase, str] = {}
+    for phase in (Phase.BASELINE, Phase.RED, Phase.GREEN):
+        path = phase_paths[phase]
+        if path is None:
+            return f"{cycle_id}: missing {phase.value}"
+        ref = _repository_ref(path)
+        if ref is None:
+            return f"{cycle_id}: {phase.value} ref <missing> is invalid"
+        refs[phase] = ref
+
+    baseline_ref = refs[Phase.BASELINE]
+    red_ref = refs[Phase.RED]
+    green_ref = refs[Phase.GREEN]
+
+    if not _is_ancestor(root, baseline_ref, red_ref):
+        return f"{cycle_id}: baseline ref {baseline_ref} is not an ancestor of red ref {red_ref}"
+    if not _is_ancestor(root, red_ref, green_ref):
+        return f"{cycle_id}: red ref {red_ref} is not an ancestor of green ref {green_ref}"
+    if not _is_ancestor(root, green_ref, "HEAD"):
+        return f"{cycle_id}: green ref {green_ref} is not an ancestor of PR HEAD"
+    return None
+
+
 def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
     """Require a complete causal witness that belongs to this PR's Git history.
 
     This is intentionally not semantic coverage. SinusTDD does not decide whether every
-    changed file correctly implements an RFC or issue. It verifies the declared process:
-    a product PR carries a new/touched causal cycle, its ledger is a contiguous
-    BASELINE -> RED -> GREEN chain, and the declared baseline belongs to the ancestry of
-    the PR HEAD. Interpretation remains the responsibility of coding/review agents.
+    changed file correctly implements an RFC or issue. It verifies only the declared
+    causal process: a product PR carries a new/touched BASELINE -> RED -> GREEN ledger,
+    the ledger is intact, and Git proves BASELINE <= RED <= GREEN <= PR HEAD.
 
     Historical incomplete cycles are ignored. REFACTOR and terminal reflection remain
-    optional. The first PR that introduced this gate was allowed to bootstrap because its
-    base branch did not yet contain this module.
+    optional. Interpretation remains the responsibility of coding/review agents.
     """
     if not _base_has_gate(root, base_ref):
         return GateResult(True, "bootstrap: base branch does not enforce the dogfood gate yet")
@@ -133,14 +159,9 @@ def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
             failures.append(f"{cycle_id}: ledger integrity verification failed")
             continue
 
-        baseline_path = phase_paths[Phase.BASELINE]
-        assert baseline_path is not None
-        baseline_ref = _repository_ref(baseline_path)
-        if baseline_ref is None or not _is_ancestor(root, baseline_ref):
-            failures.append(
-                f"{cycle_id}: baseline ref {baseline_ref or '<missing>'} "
-                "is not an ancestor of PR HEAD"
-            )
+        git_order_failure = _verify_git_phase_order(root, cycle_id, phase_paths)
+        if git_order_failure is not None:
+            failures.append(git_order_failure)
             continue
 
         complete.append(cycle_id)
