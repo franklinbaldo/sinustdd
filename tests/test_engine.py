@@ -38,6 +38,7 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     intent = IntentRecord(
         source_reference="RFC-0042",
+        intent="Reject expired tokens while keeping valid tokens functional with test_new",
         interpretation="Reject expired tokens while keeping valid tokens functional",
         intended_change="src/auth.py verification logic",
         intended_proof="tests/test_feature.py::test_new",

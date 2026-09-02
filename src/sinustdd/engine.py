@@ -90,7 +90,7 @@ class SinusTDDEngine:
     def begin(
         self,
         *,
-        specification_source: SpecificationSource = SpecificationSource.FREEFORM,
+        specification_source: SpecificationSource = SpecificationSource.UNSPECIFIED,
         specification_reference: str = "",
         intent_record: IntentRecord | None = None,
         test_spec: TestSpec | None = None,
