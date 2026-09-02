@@ -14,7 +14,7 @@ from sinustdd.diff import (
     compute_test_files_hashes,
     get_head_commit,
 )
-from sinustdd.evidence import write_phase_evidence
+from sinustdd.evidence import verify_ledger, write_phase_evidence
 from sinustdd.models import (
     BaselineWitness,
     Cycle,
@@ -36,6 +36,11 @@ class SinusTDDEngine:
         self.root = root
         self.store = SessionStore(root)
         self.adapter = adapter or get_adapter(root)
+
+    def _verify_ledger_integrity(self, cycle_id: str) -> None:
+        if not verify_ledger(self.root, cycle_id):
+            msg = f"Ledger verification failed for {cycle_id}! Chain is tampered or non-contiguous."
+            raise StateTransitionError(msg)
 
     def status(self) -> dict[str, Any]:
         cycle = self.store.load_active_cycle()
@@ -97,6 +102,8 @@ class SinusTDDEngine:
             payload=baseline_wit.model_dump(),
         )
 
+        self._verify_ledger_integrity(cycle_id)
+
         cycle = Cycle(
             cycle_id=cycle_id,
             phase=Phase.BASELINE,
@@ -117,6 +124,8 @@ class SinusTDDEngine:
         if cycle.phase not in (Phase.BASELINE, Phase.RED):
             msg = f"Cannot transition to RED from phase '{cycle.phase}'."
             raise StateTransitionError(msg)
+
+        self._verify_ledger_integrity(cycle.cycle_id)
 
         # Check Diff Invariants
         diff = classify_diff(self.root, cycle.baseline_commit)
@@ -146,12 +155,20 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # Ensure failure origin is rigorously tied to the modified/added test files
-        relevant_failures = [
-            f
-            for f in test_run.tests_failed
-            if any(t_file in f.replace("\\", "/") for t_file in test_files)
-        ]
+        # Use structured_failures.source_file when available, fallback to normalized test_id
+        relevant_failures: list[str] = []
+        if test_run.structured_failures:
+            for sf in test_run.structured_failures:
+                if any(
+                    tf in sf.source_file.replace("\\", "/") or sf.source_file in tf
+                    for tf in test_files
+                ):
+                    relevant_failures.append(sf.test_id)
+        else:
+            for f in test_run.tests_failed:
+                if any(tf in f.replace("\\", "/") for tf in test_files):
+                    relevant_failures.append(f)
+
         if not relevant_failures:
             msg = (
                 "Disconnected failure detected! The failing tests "
@@ -179,6 +196,8 @@ class SinusTDDEngine:
             payload=witness.model_dump(),
         )
 
+        self._verify_ledger_integrity(cycle.cycle_id)
+
         from_phase = cycle.phase
         cycle.phase = Phase.RED
         cycle.red_witness = witness
@@ -198,6 +217,8 @@ class SinusTDDEngine:
         if cycle.phase not in (Phase.RED, Phase.GREEN):
             msg = f"Cannot transition to GREEN from phase '{cycle.phase}'."
             raise StateTransitionError(msg)
+
+        self._verify_ledger_integrity(cycle.cycle_id)
 
         # 1. VERIFY FROZEN TESTS: Test files recorded during RED cannot have been modified
         current_test_hashes = compute_test_files_hashes(self.root, cycle.red_witness.test_files)
@@ -242,6 +263,8 @@ class SinusTDDEngine:
             payload=witness.model_dump(),
         )
 
+        self._verify_ledger_integrity(cycle.cycle_id)
+
         from_phase = cycle.phase
         cycle.phase = Phase.GREEN
         cycle.green_witness = witness
@@ -257,6 +280,8 @@ class SinusTDDEngine:
             msg = "Cannot transition to REFACTOR before achieving GREEN phase."
             raise StateTransitionError(msg)
 
+        self._verify_ledger_integrity(cycle.cycle_id)
+
         test_run = self.adapter.run_tests(self.root)
         if not test_run.passed:
             msg = f"Refactoring broke the test suite! Failed: {test_run.tests_failed}."
@@ -271,6 +296,8 @@ class SinusTDDEngine:
             repository_ref=get_head_commit(self.root),
             payload=refactor_wit.model_dump(),
         )
+
+        self._verify_ledger_integrity(cycle.cycle_id)
 
         from_phase = cycle.phase
         cycle.phase = Phase.REFACTOR
@@ -289,6 +316,8 @@ class SinusTDDEngine:
         if cycle.phase not in (Phase.GREEN, Phase.REFACTOR):
             msg = f"Cannot complete cycle in phase '{cycle.phase}'. Must be GREEN or REFACTOR."
             raise StateTransitionError(msg)
+
+        self._verify_ledger_integrity(cycle.cycle_id)
 
         test_run = self.adapter.run_tests(self.root)
         if not test_run.passed:
