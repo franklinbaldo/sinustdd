@@ -29,6 +29,7 @@ from sinustdd.models import (
     Transition,
 )
 from sinustdd.store import SessionStore
+from sinustdd.workspace_guard import WorkspaceGuard
 
 
 def _safe_classify_diff(root: Path, base_ref: str | None, adapter: VerificationAdapter) -> Any:
@@ -49,11 +50,13 @@ class SinusTDDEngine:
         root: Path,
         adapter: VerificationAdapter | None = None,
         behavior_mode: BehaviorMode = BehaviorMode.OFF,
+        workspace_guard: WorkspaceGuard | None = None,
     ) -> None:
         self.root = root
         self.store = SessionStore(root)
         self.adapter = adapter or get_adapter(root)
         self.behavior_mode = behavior_mode
+        self.workspace_guard = workspace_guard
 
     def _verify_ledger_integrity(self, cycle_id: str) -> None:
         if not verify_ledger(self.root, cycle_id):
@@ -68,6 +71,7 @@ class SinusTDDEngine:
                 "phase": Phase.IDLE,
                 "theta": Phase.IDLE.theta,
                 "behavior_mode": self.behavior_mode.value,
+                "workspace_guard_enabled": self.workspace_guard is not None,
                 "message": "No active TDD cycle. Run sinustdd begin to start.",
             }
         return {
@@ -76,6 +80,7 @@ class SinusTDDEngine:
             "phase": cycle.phase,
             "theta": cycle.phase.theta,
             "behavior_mode": self.behavior_mode.value,
+            "workspace_guard_enabled": self.workspace_guard is not None,
             "specification_source": cycle.specification_source.value,
             "specification_reference": cycle.specification_reference,
             "intent_record": (cycle.intent_record.model_dump() if cycle.intent_record else None),
@@ -109,7 +114,6 @@ class SinusTDDEngine:
             msg = f"Cycle {active.cycle_id} is already in progress (phase: {active.phase})."
             raise StateTransitionError(msg)
 
-        # Enforce BehaviorMode.REQUIRED check
         if self.behavior_mode == BehaviorMode.REQUIRED and test_spec is None:
             msg = (
                 "BehaviorMode.REQUIRED is active: Cannot begin cycle without a valid TestSpec. "
@@ -117,7 +121,6 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # 1. Verify baseline suite is 100% GREEN via VerificationAdapter
         test_run = self.adapter.run_tests(self.root)
         if not test_run.passed:
             msg = (
@@ -147,7 +150,6 @@ class SinusTDDEngine:
         if test_spec:
             payload["test_spec"] = test_spec.model_dump()
 
-        # 2. Obligatory OKF Evidence emission (No catch-and-pass)
         ev_path, _ = write_phase_evidence(
             root=self.root,
             cycle_id=cycle_id,
@@ -173,6 +175,8 @@ class SinusTDDEngine:
         )
 
         self.store.save_active_cycle(cycle)
+        if self.workspace_guard is not None:
+            self.workspace_guard.enforce_red()
         return cycle
 
     def mark_red(self) -> RedWitness:
@@ -186,7 +190,6 @@ class SinusTDDEngine:
 
         self._verify_ledger_integrity(cycle.cycle_id)
 
-        # Check Diff Invariants
         diff = _safe_classify_diff(self.root, cycle.baseline_commit, self.adapter)
         if diff.has_production_changes:
             msg = (
@@ -214,7 +217,6 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # Use structured_failures.source_file when available, fallback to normalized test_id
         relevant_failures: list[str] = []
         if test_run.structured_failures:
             for sf in test_run.structured_failures:
@@ -236,7 +238,6 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # Freeze and hash the test files at the exact moment of RED witness
         test_hashes = compute_test_files_hashes(self.root, test_files)
 
         witness = RedWitness(
@@ -264,6 +265,8 @@ class SinusTDDEngine:
         cycle.evidence_chain.append(str(ev_path))
 
         self.store.save_active_cycle(cycle)
+        if self.workspace_guard is not None:
+            self.workspace_guard.restore()
         return witness
 
     def mark_green(self) -> GreenWitness:
@@ -279,7 +282,6 @@ class SinusTDDEngine:
 
         self._verify_ledger_integrity(cycle.cycle_id)
 
-        # 1. VERIFY FROZEN TESTS: Test files recorded during RED cannot have been modified
         current_test_hashes = compute_test_files_hashes(self.root, cycle.red_witness.test_files)
         for t_file, original_hash in cycle.red_witness.test_files_hashes.items():
             current_hash = current_test_hashes.get(t_file, "")
@@ -290,7 +292,6 @@ class SinusTDDEngine:
                 )
                 raise StateTransitionError(msg)
 
-        # 2. Verify Production Code Was Implemented
         diff = _safe_classify_diff(self.root, cycle.baseline_commit, self.adapter)
         if not diff.has_production_changes:
             msg = (
@@ -299,7 +300,6 @@ class SinusTDDEngine:
             )
             raise StateTransitionError(msg)
 
-        # 3. Verify Entire Suite (Baseline + New Test) is Green via VerificationAdapter
         test_run = self.adapter.run_tests(self.root)
         if not test_run.passed:
             msg = (
