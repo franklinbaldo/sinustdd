@@ -1,4 +1,4 @@
-"""Versioned OKF evidence ledger and verification for sinustdd cycles."""
+"""Versioned OKF evidence ledger and strict sequential verification for sinustdd cycles."""
 
 from __future__ import annotations
 
@@ -89,9 +89,9 @@ def write_phase_evidence(
         "",
         "This document is repository evidence emitted by sinustdd.",
         "",
-        "```json",
+        "`json",
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str),
-        "```",
+        "`",
         "",
     ]
     path.write_text("\n".join(frontmatter + body), encoding="utf-8")
@@ -106,22 +106,25 @@ def write_phase_evidence(
 
 
 def verify_ledger(root: Path, cycle_id: str) -> bool:
-    """Verify integrity and hash chaining of all recorded phase evidence in a cycle."""
+    """Verify integrity, hash chaining, and contiguous phase sequence of a cycle."""
     order = [Phase.BASELINE, Phase.RED, Phase.GREEN, Phase.REFACTOR]
     previous_hash: str | None = None
+    seen_phases: list[Phase] = []
 
     for ph in order:
         p = get_phase_evidence_path(root, cycle_id, ph)
         if not p.is_file():
+            # If we already saw later phases, a gap is a violation
             continue
 
+        seen_phases.append(ph)
         text = p.read_text(encoding="utf-8")
         m_sha = re.search(r'sha256:\s*["\']?([^"\'\n]+)["\']?', text)
         m_prev = re.search(r'previous_evidence_sha256:\s*["\']?([^"\'\n]+)["\']?', text)
         m_ref = re.search(r'repository_ref:\s*["\']?([^"\'\n]+)["\']?', text)
 
         # Extract payload JSON block
-        m_json = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
+        m_json = re.search(r"`json\n(.*?)\n`", text, re.DOTALL)
         if not m_sha or not m_ref or not m_json:
             return False
 
@@ -152,5 +155,11 @@ def verify_ledger(root: Path, cycle_id: str) -> bool:
             return False
 
         previous_hash = cur_sha
+
+    # Check contiguous sequence: no skipping (e.g. baseline -> green without red)
+    if seen_phases:
+        expected_prefix = order[: len(seen_phases)]
+        if seen_phases != expected_prefix:
+            return False
 
     return True

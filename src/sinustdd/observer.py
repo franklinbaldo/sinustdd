@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sinustdd.adapters import TestAdapter, get_adapter
 from sinustdd.diff import classify_diff, compute_test_files_hashes
 from sinustdd.engine import SinusTDDEngine, StateTransitionError
 from sinustdd.evidence import verify_ledger
 from sinustdd.models import Phase
-from sinustdd.runner import run_tests
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +38,10 @@ class Observer:
     unambiguous protocol violations.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, adapter: TestAdapter | None = None) -> None:
         self.root = root or Path.cwd()
-        self.engine = SinusTDDEngine(self.root)
+        self.adapter = adapter or get_adapter(self.root)
+        self.engine = SinusTDDEngine(self.root, adapter=self.adapter)
         self._callbacks: list[ViolationCallback] = []
 
     def subscribe(self, callback: ViolationCallback) -> None:
@@ -84,8 +85,8 @@ class Observer:
             diff = classify_diff(self.root)
             # If repo is clean or starting work, try to begin
             if not diff.has_production_changes and not diff.has_test_changes:
-                test_res = run_tests(self.root)
-                if test_res.passed:
+                test_run = self.adapter.run_tests(self.root)
+                if test_run.passed:
                     try:
                         self.engine.begin()
                         return {
@@ -120,8 +121,8 @@ class Observer:
                 and not diff.has_production_changes
                 and current_phase == Phase.BASELINE
             ):
-                test_res = run_tests(self.root)
-                if not test_res.passed and test_res.failed_tests:
+                test_run = self.adapter.run_tests(self.root)
+                if not test_run.passed and test_run.tests_failed:
                     try:
                         self.engine.mark_red()
                         return {
@@ -153,8 +154,8 @@ class Observer:
 
                 diff = classify_diff(self.root, cycle.baseline_commit)
                 if diff.has_production_changes and current_phase == Phase.RED:
-                    test_res = run_tests(self.root)
-                    if test_res.passed:
+                    test_run = self.adapter.run_tests(self.root)
+                    if test_run.passed:
                         try:
                             self.engine.mark_green()
                             return {

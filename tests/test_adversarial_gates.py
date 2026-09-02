@@ -4,27 +4,29 @@ from pathlib import Path
 
 import pytest
 
+from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.diff import DiffClassification
 from sinustdd.engine import SinusTDDEngine, StateTransitionError
 from sinustdd.models import Phase
-from sinustdd.runner import TestExecutionResult
 
 
 def test_adversarial_baseline_already_failing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Attack 1: Agent tries to begin a cycle while tests are already broken."""
-    engine = SinusTDDEngine(tmp_path)
+    adapter = PytestAdapter()
+    engine = SinusTDDEngine(tmp_path, adapter=adapter)
 
-    def mock_run_tests_broken(cwd: Path):
-        return TestExecutionResult(
+    def mock_run_tests_broken(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
             passed=False,
             returncode=1,
             output="FAILED tests/test_old.py::test_legacy",
-            failed_tests=["tests/test_old.py::test_legacy"],
+            tests_failed=["tests/test_old.py::test_legacy"],
         )
 
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_broken)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_broken)
 
     with pytest.raises(StateTransitionError, match="baseline suite has failing tests"):
         engine.begin()
@@ -34,14 +36,19 @@ def test_adversarial_red_with_production_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Attack 2: Agent tries to write production code during RED phase."""
-    engine = SinusTDDEngine(tmp_path)
+    adapter = PytestAdapter()
+    engine = SinusTDDEngine(tmp_path, adapter=adapter)
 
-    def mock_run_tests_clean(cwd: Path):
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_old.py::test_ok"], output="OK"
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_old.py::test_ok"],
+            output="OK",
         )
 
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     engine.begin()
 
     def mock_classify_diff_cheating(cwd: Path, base_ref: str | None = None):
@@ -62,14 +69,19 @@ def test_adversarial_red_disconnected_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Attack 3: Agent introduces test_a.py, but an unrelated test_b.py failed."""
-    engine = SinusTDDEngine(tmp_path)
+    adapter = PytestAdapter()
+    engine = SinusTDDEngine(tmp_path, adapter=adapter)
 
-    def mock_run_tests_clean(cwd: Path):
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_old.py::test_ok"], output="OK"
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_old.py::test_ok"],
+            output="OK",
         )
 
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     engine.begin()
 
     def mock_classify_diff(cwd: Path, base_ref: str | None = None):
@@ -79,16 +91,17 @@ def test_adversarial_red_disconnected_failure(
             has_production_changes=False,
         )
 
-    def mock_run_tests_unrelated_fail(cwd: Path):
-        return TestExecutionResult(
+    def mock_run_tests_unrelated_fail(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
             passed=False,
             returncode=1,
             output="FAILED tests/test_other.py::test_unrelated",
-            failed_tests=["tests/test_other.py::test_unrelated"],
+            tests_failed=["tests/test_other.py::test_unrelated"],
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_unrelated_fail)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_unrelated_fail)
 
     with pytest.raises(StateTransitionError, match="Disconnected failure detected"):
         engine.mark_red()
@@ -98,15 +111,20 @@ def test_adversarial_green_tampering_test_assertions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Attack 4: Agent records RED witness, then weakens/modifies the test file during GREEN."""
-    engine = SinusTDDEngine(tmp_path)
+    adapter = PytestAdapter()
+    engine = SinusTDDEngine(tmp_path, adapter=adapter)
 
     # 1. Baseline ok
-    def mock_run_tests_clean(cwd: Path):
-        return TestExecutionResult(
-            passed=True, returncode=0, passed_tests=["tests/test_old.py::test_ok"], output="OK"
+    def mock_run_tests_clean(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            tests_passed=["tests/test_old.py::test_ok"],
+            output="OK",
         )
 
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
     engine.begin()
 
     # 2. Legitimate RED
@@ -121,17 +139,18 @@ def test_adversarial_green_tampering_test_assertions(
             has_production_changes=False,
         )
 
-    def mock_run_tests_fail(cwd: Path):
-        return TestExecutionResult(
+    def mock_run_tests_fail(root: Path, selection: list[str] | None = None) -> TestRun:
+        return TestRun(
+            adapter_name="pytest",
             passed=False,
             returncode=1,
             output="FAILED tests/test_auth.py::test_strict",
-            failed_tests=["tests/test_auth.py::test_strict"],
+            tests_failed=["tests/test_auth.py::test_strict"],
             failure_fingerprint="auth_fail_hash",
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff_red)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_fail)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_fail)
 
     engine.mark_red()
     assert engine.status()["phase"] == Phase.RED
@@ -148,7 +167,7 @@ def test_adversarial_green_tampering_test_assertions(
         )
 
     monkeypatch.setattr("sinustdd.engine.classify_diff", mock_classify_diff_green)
-    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+    monkeypatch.setattr(adapter, "run_tests", mock_run_tests_clean)
 
     with pytest.raises(StateTransitionError, match="Test assertion tampering detected"):
         engine.mark_green()
