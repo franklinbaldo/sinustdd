@@ -17,7 +17,15 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert st["phase"] == Phase.IDLE
     assert st["theta"] == 0.0
 
-    # 2. Begin cycle
+    # 2. Begin cycle (mock passing baseline)
+    def mock_run_tests_clean(cwd: Path):
+        from sinustdd.runner import TestExecutionResult
+
+        return TestExecutionResult(
+            passed=True, returncode=0, passed_tests=["tests/test_x.py::test_1"], output="OK"
+        )
+
+    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
     cycle = engine.begin()
     assert cycle.phase == Phase.BASELINE
     assert engine.status()["active"]
@@ -83,8 +91,9 @@ def test_engine_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert engine.status()["phase"] == Phase.GREEN
 
     # 6. Refactor phase
-    refactor_cycle = engine.mark_refactor()
-    assert refactor_cycle.phase == Phase.REFACTOR
+    refactor_wit = engine.mark_refactor()
+    assert len(refactor_wit.tests_passed) > 0
+    assert engine.status()["phase"] == Phase.REFACTOR
 
     # 7. Complete cycle
     completed_cycle = engine.complete()

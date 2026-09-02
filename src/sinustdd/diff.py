@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DiffClassification(BaseModel):
-    test_files_modified: list[str] = []
-    test_files_added: list[str] = []
-    production_files_modified: list[str] = []
-    production_files_added: list[str] = []
+    test_files_modified: list[str] = Field(default_factory=list)
+    test_files_added: list[str] = Field(default_factory=list)
+    production_files_modified: list[str] = Field(default_factory=list)
+    production_files_added: list[str] = Field(default_factory=list)
     has_test_changes: bool = False
     has_production_changes: bool = False
 
@@ -33,6 +34,24 @@ def get_head_commit(cwd: Path) -> str:
     return run_git("rev-parse", "HEAD", cwd=cwd) or "initial"
 
 
+def compute_file_hash(path: Path) -> str:
+    """Compute SHA-256 hash of a file's content normalized for line endings."""
+    if not path.is_file():
+        return ""
+    content = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def compute_test_files_hashes(cwd: Path, test_files: list[str]) -> dict[str, str]:
+    """Compute mapping from test file path to SHA-256 digest."""
+    hashes: dict[str, str] = {}
+    for rel_path in test_files:
+        full_path = cwd / rel_path
+        if full_path.is_file():
+            hashes[rel_path] = compute_file_hash(full_path)
+    return hashes
+
+
 def classify_diff(cwd: Path, base_ref: str | None = None) -> DiffClassification:
     """Classify modified and added files between working directory (or HEAD) and base_ref."""
     cmd = ["diff", "--name-status"]
@@ -50,7 +69,7 @@ def classify_diff(cwd: Path, base_ref: str | None = None) -> DiffClassification:
         filepath = parts[-1].replace("\\", "/")
 
         is_test = filepath.startswith("tests/") or "test_" in filepath or "_test.py" in filepath
-        is_prod = filepath.startswith("src/") or filepath.endswith(".py") and not is_test
+        is_prod = filepath.startswith("src/") or (filepath.endswith(".py") and not is_test)
 
         if is_test:
             if status == "A":

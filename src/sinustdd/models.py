@@ -37,10 +37,20 @@ class Transition(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class BaselineWitness(BaseModel):
+    """Immutable proof that the baseline suite was completely green before changes."""
+
+    baseline_commit: str
+    tests_passed: list[str] = Field(default_factory=list)
+    suite_fingerprint: str
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class RedWitness(BaseModel):
-    """Immutable proof that a test legitimately failed against baseline production."""
+    """Immutable proof that newly introduced/modified tests legitimately failed."""
 
     test_files: list[str] = Field(default_factory=list)
+    test_files_hashes: dict[str, str] = Field(default_factory=dict)
     failed_tests: list[str] = Field(default_factory=list)
     failure_fingerprint: str
     baseline_commit: str
@@ -51,6 +61,14 @@ class GreenWitness(BaseModel):
     """Immutable proof that production changes resolved the red failure with frozen tests."""
 
     production_files_modified: list[str] = Field(default_factory=list)
+    test_files_hashes_verified: dict[str, str] = Field(default_factory=dict)
+    tests_passed: list[str] = Field(default_factory=list)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RefactorWitness(BaseModel):
+    """Immutable proof that structural cleanup preserved 100% test contract."""
+
     tests_passed: list[str] = Field(default_factory=list)
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -61,9 +79,12 @@ class Cycle(BaseModel):
     cycle_id: str
     phase: Phase = Phase.IDLE
     baseline_commit: str
+    baseline_witness: BaselineWitness | None = None
     red_witness: RedWitness | None = None
     green_witness: GreenWitness | None = None
+    refactor_witness: RefactorWitness | None = None
     transitions: list[Transition] = Field(default_factory=list)
+    evidence_chain: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

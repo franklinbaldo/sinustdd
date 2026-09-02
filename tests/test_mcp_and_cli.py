@@ -18,6 +18,15 @@ def test_cli_commands_coverage(
     test_engine = SinusTDDEngine(tmp_path)
     monkeypatch.setattr("sinustdd.cli._engine", lambda: test_engine)
 
+    def mock_run_tests_clean(cwd: Path):
+        from sinustdd.runner import TestExecutionResult
+
+        return TestExecutionResult(
+            passed=True, returncode=0, passed_tests=["tests/test_a.py::test_init"], output="OK"
+        )
+
+    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
+
     info()
     status()
     begin()
@@ -92,7 +101,15 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     st = sinustdd_status()
     assert not st["active"]
 
-    # 2. Begin
+    # 2. Begin (mock clean baseline)
+    def mock_run_tests_clean(cwd: Path):
+        from sinustdd.runner import TestExecutionResult
+
+        return TestExecutionResult(
+            passed=True, returncode=0, passed_tests=["tests/test_b.py::test_init"], output="OK"
+        )
+
+    monkeypatch.setattr("sinustdd.engine.run_tests", mock_run_tests_clean)
     b = sinustdd_begin()
     assert b["phase"] == "baseline"
 
@@ -143,7 +160,7 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     # 5. Refactor & complete
     ref = sinustdd_refactor()
-    assert ref["phase"] == "refactor"
+    assert "tests_passed" in ref
     comp = sinustdd_complete()
     assert comp["phase"] == "completed"
 

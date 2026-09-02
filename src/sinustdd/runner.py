@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 
 class TestExecutionResult(BaseModel):
+    __test__ = False
     passed: bool
     returncode: int
     output: str
