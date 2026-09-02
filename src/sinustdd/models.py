@@ -131,13 +131,12 @@ class Cycle(BaseModel):
 
 
 class PhaseEvidence(BaseModel):
-    """Append-only OKF evidence emitted whenever a cycle crosses a phase boundary."""
+    """Parsed identity of one append-only OKF v2 phase witness."""
 
-    schema_version: int = 1
+    schema_version: int = 2
     cycle_id: str
     phase: Phase
     repository_ref: str
-    payload: dict[str, Any]
-    previous_evidence_sha256: str | None = None
+    previous_evidence_digest: str | None = None
+    parsed_digest: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    sha256: str

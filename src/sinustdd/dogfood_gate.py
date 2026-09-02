@@ -7,6 +7,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from okf_parser.parser import DocumentParseError, parse_document
+
 from sinustdd.evidence import find_phase_evidence_path, verify_ledger
 from sinustdd.models import Phase
 
@@ -63,19 +65,19 @@ def _changed_cycle_ids(paths: list[str]) -> set[str]:
             continue
         remainder = path[len(EVIDENCE_PREFIX) :]
         cycle_id, sep, _ = remainder.partition("/")
-        if sep and cycle_id:
+        # Contract files (`specs/`, `okf.schema.sql`) live beside evidence but are not cycles.
+        if sep and cycle_id.startswith("cycle-"):
             cycle_ids.add(cycle_id)
     return cycle_ids
 
 
 def _repository_ref(evidence_path: Path) -> str | None:
-    """Read repository_ref from an authored evidence frontmatter block."""
-    for line in evidence_path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("repository_ref:"):
-            continue
-        value = line.split(":", 1)[1].strip()
-        return value.strip("\"'") or None
-    return None
+    """Read repository_ref through the canonical OKF document parser."""
+    try:
+        value = parse_document(evidence_path).frontmatter.get("repository_ref")
+    except (DocumentParseError, OSError, UnicodeError):
+        return None
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _is_ancestor(root: Path, ancestor: str, descendant: str = "HEAD") -> bool:
