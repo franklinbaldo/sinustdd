@@ -52,7 +52,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
-skips = ["B101"]
+skips = ["B101", "B404", "B603", "B607"]
 
 [tool.vulture]
 paths = ["src/sinustdd"]

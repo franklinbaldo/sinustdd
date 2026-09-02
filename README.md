@@ -1,39 +1,70 @@
 # sinustdd 🌊
 
-> **Sinusoidal TDD Harmonic State Machine for Autonomous Coding Agents**
+> **sinustdd proves that the test became red before the code made it green.**
 
-`sinustdd` is an opinionated verification and orchestration protocol designed to enforce genuine Test-Driven Development (TDD) discipline on AI agents through harmonic phase transitions.
-
----
-
-## 🌊 The Harmonic TDD Principle
-
-Traditional static assertions (e.g., 100% passing tests continuously) fail with LLM agents because agents often:
-1. Write tests and production code simultaneously.
-2. Weaken test assertions when a test fails unexpectedly.
-3. Skip verifying that a test actually failed before making it pass.
-
-`sinustdd` models TDD as a continuous sinusoidal wave of phase $\theta \in [0, 2\pi]$:
-
-- **🔴 Red Phase ($\theta \in [0, \pi)$):**
-  - **Invariance:** $\frac{d(\text{Failures})}{dt} > 0$. New tests are introduced. Production code modifications are locked. Tests MUST fail.
-- **🟢 Green Phase ($\theta \in [\pi, 2\pi)$):**
-  - **Invariance:** $\frac{d(\text{Passing})}{dt} > 0$ and $\text{Failures} \to 0$. Production code is implemented. Existing test assertions are immutable.
-- **🔵 Refactor Phase ($\theta = 2\pi$):**
-  - **Invariance:** $\text{Passing} = 100\%$, $\text{Failures} = 0$, with structural and complexity metrics improving without external behavior alteration.
+`sinustdd` is an opinionated verification and protocol state machine designed to enforce genuine Test-Driven Development (TDD) causal discipline on AI agents through verifiable phase transitions.
 
 ---
 
-## 🚀 Installation & Usage
+## 🌊 The Causal TDD Thesis
 
-```bash
-uv add sinustdd
+Traditional static test gates fail with AI agents because LLMs frequently:
+1. **Write tests and code simultaneously**, bypassing red-phase verification.
+2. **Weaken test assertions** when an implementation proves difficult ("moving the goalposts").
+3. **Write tests that never failed**, providing zero causal proof that the test prevents regressions.
+
+`sinustdd` models the TDD harmonic cycle $\theta \in [0, 2\pi]$ as a strict transition state machine with verifiable witnesses:
+
+```text
+               (θ = π)
+           RED WITNESS
+       [test fails against
+        baseline production]
+              /       \
+ (θ = 0)     /         \     (θ = 2π ≡ 0)
+ BASELINE ──            ── GREEN WITNESS ──── REFACTOR ──► CYCLE N+1
+    (B)                     [tests frozen,
+                             production G
+                             makes all pass]
 ```
+
+### 🔁 Invariant Phase Contracts
+
+1. **🔴 Red Phase ($\theta = 0 \to \pi$):**
+   - $\text{production\_diff}(B, R) = \emptyset$ (Source code is locked).
+   - $\exists \text{ new\_test} : \text{fail}(\text{new\_test}, B)$ $\to$ Records **`RedWitness`** (failure fingerprint).
+2. **🟢 Green Phase ($\theta = \pi \to 2\pi$):**
+   - $\text{test\_assertion\_diff}(R, G) = \emptyset$ (Test assertions are frozen; goalposts cannot move).
+   - $\text{production\_diff}(B, G) \neq \emptyset$ (Production code is implemented).
+   - $\text{new\_tests} = \text{PASS} \land \text{previous\_tests} = \text{PASS}$ $\to$ Records **`GreenWitness`**.
+3. **🔵 Refactor Phase ($\theta = 2\pi$):**
+   - $\text{behavior\_before} == \text{behavior\_after}$ ($\text{Passing} = 100\%$).
+   - Code structure improves without altering external contracts.
+
+---
+
+## 🚀 Interface: CLI (Cyclopts) & FastMCP
+
+`sinustdd` exposes both a human/agent-friendly CLI powered by **Cyclopts** and an **MCP Server** powered by **FastMCP** for native integration into AI Agent harnesses.
 
 ### CLI
 ```bash
-sinustdd info
+sinustdd begin           # Snapshot baseline B and start Cycle N
+sinustdd red             # Verify test failures on B and record RedWitness
+sinustdd green           # Verify production diff makes witness pass with frozen tests
+sinustdd refactor        # Allow structural refactoring while preserving 100% green
+sinustdd complete        # Seal Cycle N with complete audit trail
+sinustdd status          # View current harmonic phase and witnesses
+sinustdd serve           # Start FastMCP server over stdio
 ```
+
+### FastMCP Tools
+- `sinustdd_status()`: Get current phase ($\theta$), active cycle, and witness status (`readOnlyHint=True`).
+- `sinustdd_begin()`: Open a new harmonic TDD cycle.
+- `sinustdd_red()`: Validate and lock red witness.
+- `sinustdd_green()`: Validate green transition.
+- `sinustdd_refactor()`: Transition to refactor phase.
+- `sinustdd_complete()`: Finalize cycle and seal proof.
 
 ---
 
