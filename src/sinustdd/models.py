@@ -1,9 +1,10 @@
-"""Core models for causal TDD cycles."""
+"""Core models for causal TDD cycles and their repository evidence."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -45,3 +46,16 @@ class Cycle(BaseModel):
     red_witness: RedWitness | None = None
     green_witness: GreenWitness | None = None
     transitions: list[Transition] = Field(default_factory=list)
+
+
+class PhaseEvidence(BaseModel):
+    """Append-only evidence emitted whenever a cycle crosses a phase boundary."""
+
+    schema_version: int = 1
+    cycle_id: str
+    phase: Phase
+    repository_ref: str
+    payload: dict[str, Any]
+    previous_evidence_sha256: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    sha256: str
