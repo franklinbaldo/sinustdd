@@ -68,16 +68,44 @@ def _changed_cycle_ids(paths: list[str]) -> set[str]:
     return cycle_ids
 
 
+def _repository_ref(evidence_path: Path) -> str | None:
+    """Read the repository_ref from an authored evidence frontmatter block."""
+    for line in evidence_path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("repository_ref:"):
+            continue
+        value = line.split(":", 1)[1].strip()
+        return value.strip("\"'") or None
+    return None
+
+
+def _is_ancestor(root: Path, ancestor: str, descendant: str = "HEAD") -> bool:
+    """Return whether a Git ref belongs to the ancestry of descendant.
+
+    Invalid or unreachable refs deliberately fail closed.
+    """
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    return proc.returncode == 0
+
+
 def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
-    """Require a complete causal witness for product-code changes in this PR.
+    """Require a complete causal witness that belongs to this PR's Git history.
 
-    Historical incomplete cycles are deliberately ignored. The gate considers only
-    evidence directories changed by the current PR. A complete PR witness must contain
-    BASELINE, RED, and GREEN; REFACTOR and terminal reflection remain optional.
+    This is intentionally not semantic coverage. SinusTDD does not decide whether every
+    changed file correctly implements an RFC or issue. It verifies the declared process:
+    a product PR carries a new/touched causal cycle, its ledger is a contiguous
+    BASELINE -> RED -> GREEN chain, and the declared baseline belongs to the ancestry of
+    the PR HEAD. Interpretation remains the responsibility of the coding/review agents.
 
-    The very first PR introducing this gate bootstraps successfully when the base branch
-    does not yet contain this module. Once merged, all subsequent product-code PRs are
-    subject to the rule automatically.
+    Historical incomplete cycles are ignored. REFACTOR and terminal reflection remain
+    optional. The first PR that introduced this gate was allowed to bootstrap because its
+    base branch did not yet contain this module.
     """
     if not _base_has_gate(root, base_ref):
         return GateResult(True, "bootstrap: base branch does not enforce the dogfood gate yet")
@@ -96,17 +124,27 @@ def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
     complete: list[str] = []
     failures: list[str] = []
     for cycle_id in cycle_ids:
-        missing = [
-            phase.value
+        phase_paths = {
+            phase: find_phase_evidence_path(root, cycle_id, phase)
             for phase in (Phase.BASELINE, Phase.RED, Phase.GREEN)
-            if find_phase_evidence_path(root, cycle_id, phase) is None
-        ]
+        }
+        missing = [phase.value for phase, path in phase_paths.items() if path is None]
         if missing:
             failures.append(f"{cycle_id}: missing {', '.join(missing)}")
             continue
         if not verify_ledger(root, cycle_id):
             failures.append(f"{cycle_id}: ledger integrity verification failed")
             continue
+
+        baseline_path = phase_paths[Phase.BASELINE]
+        assert baseline_path is not None
+        baseline_ref = _repository_ref(baseline_path)
+        if baseline_ref is None or not _is_ancestor(root, baseline_ref):
+            failures.append(
+                f"{cycle_id}: baseline ref {baseline_ref or '<missing>'} is not an ancestor of PR HEAD"
+            )
+            continue
+
         complete.append(cycle_id)
 
     if not complete:
