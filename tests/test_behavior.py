@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from sinustdd.behavior import (
     BehaviorIntent,
+    BehaviorMode,
     BehaviorScenario,
     compile_behavior_to_tdd,
     compile_behavior_to_test_specs,
     elicit_socratic_prompts,
 )
+
+
+def test_behavior_mode_options() -> None:
+    assert BehaviorMode.OFF == "off"
+    assert BehaviorMode.ASSIST == "assist"
+    assert BehaviorMode.REQUIRED == "required"
 
 
 def test_socratic_prompts_structure() -> None:
