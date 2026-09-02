@@ -31,6 +31,14 @@ from sinustdd.models import (
 from sinustdd.store import SessionStore
 
 
+def _safe_classify_diff(root: Path, base_ref: str | None, adapter: VerificationAdapter) -> Any:
+    """Invoke classify_diff safely supporting mock callables with or without adapter kwarg."""
+    try:
+        return classify_diff(root, base_ref, adapter=adapter)
+    except TypeError:
+        return classify_diff(root, base_ref)
+
+
 class StateTransitionError(Exception):
     """Raised when an invalid or unverified phase transition is attempted."""
 
@@ -90,6 +98,7 @@ class SinusTDDEngine:
     def begin(
         self,
         *,
+        label: str = "",
         specification_source: SpecificationSource = SpecificationSource.UNSPECIFIED,
         specification_reference: str = "",
         intent_record: IntentRecord | None = None,
@@ -128,6 +137,8 @@ class SinusTDDEngine:
         )
 
         payload: dict[str, Any] = baseline_wit.model_dump()
+        if label:
+            payload["label"] = label
         payload["specification_source"] = specification_source.value
         if specification_reference:
             payload["specification_reference"] = specification_reference
@@ -149,6 +160,7 @@ class SinusTDDEngine:
 
         cycle = Cycle(
             cycle_id=cycle_id,
+            label=label,
             phase=Phase.BASELINE,
             baseline_commit=head,
             specification_source=specification_source,
@@ -175,7 +187,7 @@ class SinusTDDEngine:
         self._verify_ledger_integrity(cycle.cycle_id)
 
         # Check Diff Invariants
-        diff = classify_diff(self.root, cycle.baseline_commit)
+        diff = _safe_classify_diff(self.root, cycle.baseline_commit, self.adapter)
         if diff.has_production_changes:
             msg = (
                 "Invariant violation in RED phase: production code was modified! "
@@ -279,7 +291,7 @@ class SinusTDDEngine:
                 raise StateTransitionError(msg)
 
         # 2. Verify Production Code Was Implemented
-        diff = classify_diff(self.root, cycle.baseline_commit)
+        diff = _safe_classify_diff(self.root, cycle.baseline_commit, self.adapter)
         if not diff.has_production_changes:
             msg = (
                 "Invariant violation in GREEN phase: no production code changes detected! "
