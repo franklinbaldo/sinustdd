@@ -68,16 +68,67 @@ def _changed_cycle_ids(paths: list[str]) -> set[str]:
     return cycle_ids
 
 
+def _repository_ref(evidence_path: Path) -> str | None:
+    """Read repository_ref from an authored evidence frontmatter block."""
+    for line in evidence_path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("repository_ref:"):
+            continue
+        value = line.split(":", 1)[1].strip()
+        return value.strip("\"'") or None
+    return None
+
+
+def _is_ancestor(root: Path, ancestor: str, descendant: str = "HEAD") -> bool:
+    """Return whether ancestor precedes descendant in Git history; fail closed otherwise."""
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _verify_git_phase_order(
+    root: Path,
+    cycle_id: str,
+    phase_paths: dict[Phase, Path | None],
+) -> str | None:
+    refs: dict[Phase, str] = {}
+    for phase in (Phase.BASELINE, Phase.RED, Phase.GREEN):
+        path = phase_paths[phase]
+        if path is None:
+            return f"{cycle_id}: missing {phase.value}"
+        ref = _repository_ref(path)
+        if ref is None:
+            return f"{cycle_id}: {phase.value} ref <missing> is invalid"
+        refs[phase] = ref
+
+    baseline_ref = refs[Phase.BASELINE]
+    red_ref = refs[Phase.RED]
+    green_ref = refs[Phase.GREEN]
+
+    if not _is_ancestor(root, baseline_ref, red_ref):
+        return f"{cycle_id}: baseline ref {baseline_ref} is not an ancestor of red ref {red_ref}"
+    if not _is_ancestor(root, red_ref, green_ref):
+        return f"{cycle_id}: red ref {red_ref} is not an ancestor of green ref {green_ref}"
+    if not _is_ancestor(root, green_ref, "HEAD"):
+        return f"{cycle_id}: green ref {green_ref} is not an ancestor of PR HEAD"
+    return None
+
+
 def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
-    """Require a complete causal witness for product-code changes in this PR.
+    """Require a complete causal witness that belongs to this PR's Git history.
 
-    Historical incomplete cycles are deliberately ignored. The gate considers only
-    evidence directories changed by the current PR. A complete PR witness must contain
-    BASELINE, RED, and GREEN; REFACTOR and terminal reflection remain optional.
+    This is intentionally not semantic coverage. SinusTDD does not decide whether every
+    changed file correctly implements an RFC or issue. It verifies only the declared
+    causal process: a product PR carries a new/touched BASELINE -> RED -> GREEN ledger,
+    the ledger is intact, and Git proves BASELINE <= RED <= GREEN <= PR HEAD.
 
-    The very first PR introducing this gate bootstraps successfully when the base branch
-    does not yet contain this module. Once merged, all subsequent product-code PRs are
-    subject to the rule automatically.
+    Historical incomplete cycles are ignored. REFACTOR and terminal reflection remain
+    optional. Interpretation remains the responsibility of coding/review agents.
     """
     if not _base_has_gate(root, base_ref):
         return GateResult(True, "bootstrap: base branch does not enforce the dogfood gate yet")
@@ -96,17 +147,23 @@ def check_pr_ready(root: Path, base_ref: str = "origin/main") -> GateResult:
     complete: list[str] = []
     failures: list[str] = []
     for cycle_id in cycle_ids:
-        missing = [
-            phase.value
+        phase_paths = {
+            phase: find_phase_evidence_path(root, cycle_id, phase)
             for phase in (Phase.BASELINE, Phase.RED, Phase.GREEN)
-            if find_phase_evidence_path(root, cycle_id, phase) is None
-        ]
+        }
+        missing = [phase.value for phase, path in phase_paths.items() if path is None]
         if missing:
             failures.append(f"{cycle_id}: missing {', '.join(missing)}")
             continue
         if not verify_ledger(root, cycle_id):
             failures.append(f"{cycle_id}: ledger integrity verification failed")
             continue
+
+        git_order_failure = _verify_git_phase_order(root, cycle_id, phase_paths)
+        if git_order_failure is not None:
+            failures.append(git_order_failure)
+            continue
+
         complete.append(cycle_id)
 
     if not complete:
