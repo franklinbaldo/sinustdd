@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
+
+
+class BehaviorMode(StrEnum):
+    """Configuration for Behavioral/BDD specification requirement."""
+
+    OFF = "off"  # Default: Pure TDD direct flow without BDD requirement
+    ASSIST = "assist"  # Socratic questionnaire & TestSpec compiler available as advisory
+    REQUIRED = "required"  # Enforces a valid TestSpec before starting TDD cycle
 
 
 class BehaviorIntent(BaseModel):
