@@ -36,8 +36,9 @@ class SessionStore:
     def archive_cycle(self, cycle: Cycle) -> None:
         """Finish the operational session without creating a second durable ledger.
 
-        The completed cycle is already represented by its versioned OKF evidence.
-        `session.json` is only an active-cycle cursor, so completion removes it.
+        Kept as a compatibility name for callers that complete a cycle. The completed
+        cycle is already represented by its versioned OKF evidence; `session.json` is
+        only an active-cycle cursor, so completion removes it.
         """
         del cycle
         self.session_file.unlink(missing_ok=True)
