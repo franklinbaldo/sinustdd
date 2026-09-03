@@ -8,9 +8,10 @@ from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.diff import DiffClassification
 from sinustdd.engine import SinusTDDEngine
 from sinustdd.models import Cycle, GreenWitness, Phase
+from sinustdd.workspace_guard import WorkspaceGuard
 
 
-class RecordingGuard:
+class RecordingGuard(WorkspaceGuard):
     def __init__(self) -> None:
         self.enforce_red_calls = 0
         self.enforce_green_calls: list[list[str]] = []
