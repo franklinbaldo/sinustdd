@@ -7,13 +7,26 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from sinustdd.adapters import get_adapter
 from sinustdd.engine import SinusTDDEngine
+from sinustdd.workspace_guard import WorkspaceGuard, get_workspace_guard
 
 mcp = FastMCP(name="sinustdd")
 
 
 def _engine() -> SinusTDDEngine:
-    return SinusTDDEngine(Path.cwd())
+    root = Path.cwd()
+    adapter = get_adapter(root)
+    guard = get_workspace_guard(root, adapter)
+    return SinusTDDEngine(root, adapter=adapter, workspace_guard=guard)
+
+
+def _guard() -> WorkspaceGuard | None:
+    root = Path.cwd()
+    return get_workspace_guard(root, get_adapter(root))
+
+
+_NO_BACKEND = "No workspace guard backend is available on this platform."
 
 
 @mcp.tool(
@@ -79,3 +92,46 @@ def sinustdd_complete() -> dict[str, Any]:
     """Finalize cycle and persist record."""
     cycle = _engine().complete()
     return cycle.model_dump()
+
+
+@mcp.tool(
+    name="sinustdd_guard_status",
+    description=(
+        "Report which workspace capabilities the phase guard is currently materializing, "
+        "including the enforced phase and the read-only paths."
+    ),
+    annotations={"readOnlyHint": True},
+)
+def sinustdd_guard_status() -> dict[str, Any]:
+    """Inspect the workspace guard without changing any permission."""
+    guard = _guard()
+    if guard is None:
+        return {"backend": None, "phase": None, "enforcing": False, "guarded_paths": []}
+    return guard.describe()
+
+
+@mcp.tool(
+    name="sinustdd_guard_explain",
+    description=(
+        "Explain why a specific workspace path is currently read-only, so an agent can "
+        "recover from a permission error instead of fighting the filesystem."
+    ),
+    annotations={"readOnlyHint": True},
+)
+def sinustdd_guard_explain(path: str) -> dict[str, Any]:
+    """Explain the causal reason a path is guarded."""
+    guard = _guard()
+    explanation = _NO_BACKEND if guard is None else guard.explain(Path(path))
+    return {"path": path, "explanation": explanation}
+
+
+@mcp.tool(
+    name="sinustdd_guard_recover",
+    description=(
+        "Reconcile workspace permissions with the active cycle after a crash, a restart, "
+        "or an external tool that changed file modes."
+    ),
+)
+def sinustdd_guard_recover() -> dict[str, Any]:
+    """Re-materialize the capabilities of the active cycle phase."""
+    return _engine().recover_workspace()

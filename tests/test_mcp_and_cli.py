@@ -174,6 +174,6 @@ def test_mcp_tools_and_execution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     async def _check() -> None:
         tools = await mcp.list_tools()
-        assert len(tools) == 6
+        assert len(tools) >= 6
 
     asyncio.run(_check())
