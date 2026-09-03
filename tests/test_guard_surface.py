@@ -93,7 +93,8 @@ def test_mcp_exposes_guard_status_and_explain_tools(
 def test_cli_and_mcp_runtime_engines_receive_selected_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sinustdd import cli, mcp as mcp_module
+    from sinustdd import cli
+    from sinustdd import mcp as mcp_module
 
     _workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
