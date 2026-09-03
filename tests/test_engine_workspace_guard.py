@@ -32,6 +32,9 @@ class RecordingGuard(WorkspaceGuard):
     def explain(self, path: Path) -> str:
         return f"recording guard: {path}"
 
+    def describe(self) -> dict[str, object]:
+        return {"backend": "recording", "phase": None, "enforcing": False, "guarded_paths": []}
+
 
 def test_engine_enforces_red_after_baseline_and_green_after_red_witness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
