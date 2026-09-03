@@ -25,8 +25,7 @@ app.command(guard_app)
 def _engine() -> SinusTDDEngine:
     root = Path.cwd()
     adapter = get_adapter(root)
-    guard = get_workspace_guard(root, adapter)
-    return SinusTDDEngine(root, adapter=adapter, workspace_guard=guard)
+    return SinusTDDEngine(root, adapter=adapter, workspace_guard=get_workspace_guard(root, adapter))
 
 
 def _guard() -> WorkspaceGuard | None:
@@ -151,7 +150,7 @@ def refactor() -> None:
 
 @app.command
 def complete() -> None:
-    """Finalize cycle and seal proof record into .sinustdd/cycles/."""
+    """Finalize the cycle after verifying its durable OKF evidence ledger."""
     try:
         cycle = _engine().complete()
         console.print(f"[bold green]✓ Cycle {cycle.cycle_id} completed and sealed.[/bold green]")

@@ -1,4 +1,4 @@
-"""Persistent store for sinustdd cycle sessions in .sinustdd/."""
+"""Ephemeral session cursor for active sinustdd cycles."""
 
 from __future__ import annotations
 
@@ -13,11 +13,9 @@ class SessionStore:
         self.root = root or Path.cwd()
         self.sinus_dir = self.root / ".sinustdd"
         self.session_file = self.sinus_dir / "session.json"
-        self.history_dir = self.sinus_dir / "cycles"
 
     def _ensure_dirs(self) -> None:
         self.sinus_dir.mkdir(parents=True, exist_ok=True)
-        self.history_dir.mkdir(parents=True, exist_ok=True)
 
     def load_active_cycle(self) -> Cycle | None:
         if not self.session_file.is_file():
@@ -36,11 +34,14 @@ class SessionStore:
         )
 
     def archive_cycle(self, cycle: Cycle) -> None:
-        self._ensure_dirs()
-        dest = self.history_dir / f"{cycle.cycle_id}.json"
-        dest.write_text(cycle.model_dump_json(indent=2), encoding="utf-8")
-        if self.session_file.exists():
-            self.session_file.unlink()
+        """Finish the operational session without creating a second durable ledger.
+
+        Kept as a compatibility name for callers that complete a cycle. The completed
+        cycle is already represented by its versioned OKF evidence; `session.json` is
+        only an active-cycle cursor, so completion removes it.
+        """
+        del cycle
+        self.session_file.unlink(missing_ok=True)
 
 
 def load_cycle() -> Cycle | None:
