@@ -23,7 +23,10 @@ app.command(guard_app)
 
 
 def _engine() -> SinusTDDEngine:
-    return SinusTDDEngine(Path.cwd())
+    root = Path.cwd()
+    adapter = get_adapter(root)
+    guard = get_workspace_guard(root, adapter)
+    return SinusTDDEngine(root, adapter=adapter, workspace_guard=guard)
 
 
 def _guard() -> WorkspaceGuard | None:
