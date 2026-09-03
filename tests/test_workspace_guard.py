@@ -57,6 +57,28 @@ def test_posix_guard_blocks_atomic_replace_of_guarded_production(tmp_path: Path)
     assert production.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_posix_guard_reports_partial_enforcement_for_mixed_green_directory(tmp_path: Path) -> None:
+    witnessed = tmp_path / "tests" / "test_witnessed.py"
+    sibling = tmp_path / "tests" / "test_sibling.py"
+    replacement = tmp_path / "replacement.tmp"
+    witnessed.parent.mkdir(parents=True)
+    witnessed.write_text("def test_witnessed(): assert False\n", encoding="utf-8")
+    sibling.write_text("def test_sibling(): assert True\n", encoding="utf-8")
+    replacement.write_text("def test_sibling(): assert False\n", encoding="utf-8")
+
+    guard = PosixPermissionGuard(tmp_path, PytestAdapter())
+    guard.enforce_green(["tests/test_witnessed.py"])
+
+    with pytest.raises(PermissionError):
+        os.replace(replacement, sibling)
+
+    state = guard.describe()
+    assert state["enforced"] is False
+    assert state["limitations"] == [
+        "tests is a mixed directory: protecting tests/test_witnessed.py also blocks atomic directory-entry updates for unguarded siblings"
+    ]
+
+
 def test_posix_guard_restores_original_permissions_from_persisted_state(tmp_path: Path) -> None:
     production = tmp_path / "src" / "feature.py"
     production.parent.mkdir(parents=True)
