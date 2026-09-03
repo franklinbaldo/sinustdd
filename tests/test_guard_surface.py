@@ -88,3 +88,20 @@ def test_mcp_exposes_guard_status_and_explain_tools(
         assert {"sinustdd_guard_status", "sinustdd_guard_explain"} <= names
 
     asyncio.run(_check())
+
+
+def test_cli_and_mcp_runtime_engines_receive_selected_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sinustdd import cli, mcp as mcp_module
+
+    _workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "get_adapter", lambda root: PytestAdapter())
+    monkeypatch.setattr(mcp_module, "get_adapter", lambda root: PytestAdapter())
+
+    cli_engine = cli._engine()
+    mcp_engine = mcp_module._engine()
+
+    assert isinstance(cli_engine.workspace_guard, PosixPermissionGuard)
+    assert isinstance(mcp_engine.workspace_guard, PosixPermissionGuard)
