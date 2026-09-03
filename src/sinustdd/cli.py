@@ -6,7 +6,9 @@ import cyclopts
 from rich.console import Console
 
 from sinustdd import __version__
+from sinustdd.adapters import get_adapter
 from sinustdd.engine import SinusTDDEngine, StateTransitionError
+from sinustdd.workspace_guard import WorkspaceGuard, get_workspace_guard
 
 console = Console()
 app = cyclopts.App(
@@ -16,8 +18,44 @@ app = cyclopts.App(
 )
 
 
+guard_app = cyclopts.App(name="guard", help="Inspect the filesystem capabilities Sinos enforces.")
+app.command(guard_app)
+
+
 def _engine() -> SinusTDDEngine:
     return SinusTDDEngine(Path.cwd())
+
+
+def _guard() -> WorkspaceGuard | None:
+    root = Path.cwd()
+    return get_workspace_guard(root, get_adapter(root))
+
+
+@guard_app.command(name="status")
+def guard_status() -> None:
+    """Show which workspace capabilities the guard is currently materializing."""
+    guard = _guard()
+    if guard is None:
+        console.print("[yellow]No workspace guard backend is available on this platform.[/yellow]")
+        return
+    state = guard.describe()
+    console.print(f"[bold cyan]Guard backend:[/bold cyan] {state['backend']}")
+    if not state["enforcing"]:
+        console.print("[yellow]Guard is idle: no phase is being enforced.[/yellow]")
+        return
+    console.print(f"[bold green]Enforcing phase:[/bold green] {state['phase']}")
+    for path in state["guarded_paths"]:
+        console.print(f"  [dim]read-only[/dim] {path}")
+
+
+@guard_app.command(name="explain")
+def guard_explain(path: Path) -> None:
+    """Explain why a specific path is read-only under the current phase."""
+    guard = _guard()
+    if guard is None:
+        console.print("[yellow]No workspace guard backend is available on this platform.[/yellow]")
+        return
+    console.print(guard.explain(path))
 
 
 @app.command

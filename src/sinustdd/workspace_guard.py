@@ -8,6 +8,7 @@ import stat
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from sinustdd.adapters import VerificationAdapter
 
@@ -45,6 +46,10 @@ class WorkspaceGuard(ABC):
     @abstractmethod
     def explain(self, path: Path) -> str:
         """Explain why a path is currently guarded, if applicable."""
+
+    @abstractmethod
+    def describe(self) -> dict[str, Any]:
+        """Report which capabilities the guard is currently materializing."""
 
 
 class PosixPermissionGuard(WorkspaceGuard):
@@ -171,9 +176,19 @@ class PosixPermissionGuard(WorkspaceGuard):
         self.state_path.unlink(missing_ok=True)
         return restored
 
+    def describe(self) -> dict[str, Any]:
+        phase, modes = self._load_state()
+        return {
+            "backend": "posix-permissions",
+            "phase": phase,
+            "enforcing": bool(modes),
+            "guarded_paths": sorted(modes),
+        }
+
     def explain(self, path: Path) -> str:
+        candidate = path if path.is_absolute() else self.root / path
         try:
-            relative = path.resolve().relative_to(self.root).as_posix()
+            relative = candidate.resolve().relative_to(self.root).as_posix()
         except ValueError:
             return "path is outside the guarded workspace"
 
@@ -189,3 +204,14 @@ class PosixPermissionGuard(WorkspaceGuard):
             f"{relative} is read-only because Sinos is enforcing RED: "
             "production stays frozen until a valid RedWitness exists"
         )
+
+
+def get_workspace_guard(root: Path, adapter: VerificationAdapter) -> WorkspaceGuard | None:
+    """Select the enforcement backend available for this workspace.
+
+    Returns None where no backend can materialize capabilities, so callers stay
+    honest about enforcement instead of pretending a no-op guard enforces.
+    """
+    if os.name == "posix":
+        return PosixPermissionGuard(root, adapter)
+    return None
