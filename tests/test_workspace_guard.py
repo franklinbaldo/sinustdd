@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 import os
 import stat
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from sinustdd.adapters import PytestAdapter
 from sinustdd.workspace_guard import PosixPermissionGuard
-
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics required")
 
