@@ -95,6 +95,10 @@ sinustdd guard recover   # Reconcile permissions with the active cycle after a c
 The guard materializes phase capabilities in the working tree: production is read-only
 during RED, and the witnessed RED contract is read-only during GREEN.
 
+The CLI and the MCP server enforce by default. Every `sinustdd` cycle transition changes
+file permissions in the working tree, and `sinustdd complete` restores the original modes.
+To run without enforcement, set `SINUSTDD_GUARD=off`.
+
 | Backend | Selected when | Enforcement |
 | --- | --- | --- |
 | `posix-permissions` | POSIX filesystem (default) | Clears write bits, restoring original modes on completion |
