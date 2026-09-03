@@ -48,6 +48,19 @@ def guard_status() -> None:
         console.print(f"  [dim]read-only[/dim] {path}")
 
 
+@guard_app.command(name="recover")
+def guard_recover() -> None:
+    """Re-materialize the workspace capabilities implied by the active cycle."""
+    report = _engine().recover_workspace()
+    action = report["action"]
+    if action == "unavailable":
+        console.print("[yellow]No workspace guard backend is available on this platform.[/yellow]")
+        return
+    if report.get("recovered_from_corrupt_state"):
+        console.print("[yellow]Discarded unreadable guard state before recovering.[/yellow]")
+    console.print(f"[bold cyan]Workspace guard {action}[/bold cyan] (phase: {report['phase']})")
+
+
 @guard_app.command(name="explain")
 def guard_explain(path: Path) -> None:
     """Explain why a specific path is read-only under the current phase."""

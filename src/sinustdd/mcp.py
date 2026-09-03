@@ -120,3 +120,15 @@ def sinustdd_guard_explain(path: str) -> dict[str, Any]:
     guard = _guard()
     explanation = _NO_BACKEND if guard is None else guard.explain(Path(path))
     return {"path": path, "explanation": explanation}
+
+
+@mcp.tool(
+    name="sinustdd_guard_recover",
+    description=(
+        "Reconcile workspace permissions with the active cycle after a crash, a restart, "
+        "or an external tool that changed file modes."
+    ),
+)
+def sinustdd_guard_recover() -> dict[str, Any]:
+    """Re-materialize the capabilities of the active cycle phase."""
+    return _engine().recover_workspace()

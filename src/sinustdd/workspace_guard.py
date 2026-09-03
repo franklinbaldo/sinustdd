@@ -51,6 +51,51 @@ class WorkspaceGuard(ABC):
     def describe(self) -> dict[str, Any]:
         """Report which capabilities the guard is currently materializing."""
 
+    def recover(
+        self,
+        expected_phase: str | None,
+        verification_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Reconcile persisted guard state with the phase the cycle expects.
+
+        Enforcement state is an operational cursor: a crash, an agent restart, or an
+        external tool can desynchronize it from the causal cycle. Recovery is
+        idempotent and always ends with the workspace materializing `expected_phase`.
+        """
+        state = self.describe()
+        corrupt = bool(state.get("corrupt_state"))
+        current = state.get("phase")
+
+        drifted = bool(state.get("drifted"))
+        if not corrupt and not drifted and state.get("enforcing") and current == expected_phase:
+            return {
+                "action": "consistent",
+                "phase": current,
+                "recovered_from_corrupt_state": False,
+                "paths": list(state.get("guarded_paths", [])),
+            }
+
+        self.restore()
+        if expected_phase is None:
+            return {
+                "action": "restored",
+                "phase": None,
+                "recovered_from_corrupt_state": corrupt,
+                "paths": [],
+            }
+        if expected_phase == "red":
+            guarded = self.enforce_red()
+        elif expected_phase == "green":
+            guarded = self.enforce_green(list(verification_paths or []))
+        else:
+            raise ValueError(f"unknown enforcement phase: {expected_phase}")
+        return {
+            "action": "reenforced",
+            "phase": expected_phase,
+            "recovered_from_corrupt_state": corrupt,
+            "paths": [path.as_posix() for path in guarded],
+        }
+
 
 class PosixPermissionGuard(WorkspaceGuard):
     """Materialize RED/GREEN capabilities using POSIX write bits.
@@ -67,14 +112,21 @@ class PosixPermissionGuard(WorkspaceGuard):
         self.adapter = adapter
         self.state_path = self.root / _STATE_PATH
 
-    def _load_state(self) -> tuple[str | None, dict[str, int]]:
+    def _read_state(self) -> tuple[str | None, dict[str, int], bool]:
+        """Read persisted state, reporting unreadable state instead of raising."""
         if not self.state_path.is_file():
-            return None, {}
-        raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-        phase = raw.get("phase")
-        modes = raw.get("original_modes", {})
-        normalized = {str(path): int(mode) for path, mode in modes.items()}
-        return (str(phase) if phase is not None else None), normalized
+            return None, {}, False
+        try:
+            raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+            phase = raw.get("phase")
+            modes = {str(path): int(mode) for path, mode in raw.get("original_modes", {}).items()}
+        except (OSError, UnicodeError, ValueError, AttributeError, TypeError):
+            return None, {}, True
+        return (str(phase) if phase is not None else None), modes, False
+
+    def _load_state(self) -> tuple[str | None, dict[str, int]]:
+        phase, modes, _corrupt = self._read_state()
+        return phase, modes
 
     def _write_state(self, phase: str, modes: dict[str, int]) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,13 +229,25 @@ class PosixPermissionGuard(WorkspaceGuard):
         return restored
 
     def describe(self) -> dict[str, Any]:
-        phase, modes = self._load_state()
+        phase, modes, corrupt = self._read_state()
         return {
             "backend": "posix-permissions",
             "phase": phase,
             "enforcing": bool(modes),
             "guarded_paths": sorted(modes),
+            "corrupt_state": corrupt,
+            "drifted": self._has_drifted(modes),
         }
+
+    def _has_drifted(self, modes: dict[str, int]) -> bool:
+        """Report whether any recorded path lost the read-only capability on disk."""
+        for relative in modes:
+            path = self.root / relative
+            if not path.is_file():
+                return True
+            if stat.S_IMODE(path.stat().st_mode) & _WRITE_MASK:
+                return True
+        return False
 
     def explain(self, path: Path) -> str:
         candidate = path if path.is_absolute() else self.root / path

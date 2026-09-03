@@ -58,6 +58,22 @@ class SinusTDDEngine:
         self.behavior_mode = behavior_mode
         self.workspace_guard = workspace_guard
 
+    def recover_workspace(self) -> dict[str, Any]:
+        """Re-materialize the workspace capabilities implied by the active cycle."""
+        if self.workspace_guard is None:
+            return {"action": "unavailable", "phase": None, "paths": []}
+
+        cycle = self.store.load_active_cycle()
+        expected: str | None = None
+        verification: list[str] = []
+        if cycle is not None and cycle.phase in (Phase.BASELINE, Phase.RED, Phase.GREEN):
+            if cycle.red_witness is None:
+                expected = "red"
+            else:
+                expected = "green"
+                verification = list(cycle.red_witness.test_files)
+        return self.workspace_guard.recover(expected, verification)
+
     def _verify_ledger_integrity(self, cycle_id: str) -> None:
         if not verify_ledger(self.root, cycle_id):
             msg = f"Ledger verification failed for {cycle_id}! Chain is tampered or non-contiguous."
