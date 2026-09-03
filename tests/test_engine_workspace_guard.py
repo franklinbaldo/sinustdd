@@ -7,7 +7,7 @@ import pytest
 from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.diff import DiffClassification
 from sinustdd.engine import SinusTDDEngine
-from sinustdd.models import GreenWitness, Phase
+from sinustdd.models import Cycle, GreenWitness, Phase
 
 
 class RecordingGuard:
@@ -95,10 +95,7 @@ def test_engine_restores_guard_when_cycle_completes(
     guard = RecordingGuard()
     engine = SinusTDDEngine(tmp_path, adapter=adapter, workspace_guard=guard)
 
-    cycle = engine.store.load_active_cycle()
-    assert cycle is None
-
-    from sinustdd.models import Cycle
+    assert engine.store.load_active_cycle() is None
 
     completed_candidate = Cycle(
         cycle_id="cycle-complete-guard",
