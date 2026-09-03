@@ -266,7 +266,7 @@ class SinusTDDEngine:
 
         self.store.save_active_cycle(cycle)
         if self.workspace_guard is not None:
-            self.workspace_guard.restore()
+            self.workspace_guard.enforce_green(witness.test_files)
         return witness
 
     def mark_green(self) -> GreenWitness:
@@ -389,4 +389,6 @@ class SinusTDDEngine:
         cycle.outcome_reflection = reflection
         cycle.transitions.append(Transition(from_phase=from_phase, to_phase=Phase.COMPLETED))
         self.store.archive_cycle(cycle)
+        if self.workspace_guard is not None:
+            self.workspace_guard.restore()
         return cycle
