@@ -10,7 +10,6 @@ import pytest
 from sinustdd.adapters import PytestAdapter
 from sinustdd.workspace_guard import PosixPermissionGuard
 
-
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics required")
 
 
@@ -76,6 +75,31 @@ def test_guard_does_not_touch_gitignored_environment_files(tmp_path: Path) -> No
     assert production in guarded
     assert environment not in guarded
     assert _mode(environment) == 0o664
+
+
+def test_guard_freezes_witnessed_red_contract_during_green(tmp_path: Path) -> None:
+    production = tmp_path / "src" / "feature.py"
+    verification = tmp_path / "tests" / "test_feature.py"
+    production.parent.mkdir(parents=True)
+    verification.parent.mkdir(parents=True)
+    production.write_text("VALUE = 1\n", encoding="utf-8")
+    verification.write_text("def test_value(): assert False\n", encoding="utf-8")
+    production.chmod(0o664)
+    verification.chmod(0o664)
+
+    guard = PosixPermissionGuard(tmp_path, PytestAdapter())
+    guarded = guard.enforce_green(["tests/test_feature.py"])
+
+    assert verification in guarded
+    assert production not in guarded
+    assert _mode(verification) & 0o222 == 0
+    assert _mode(production) & 0o200
+    assert "GREEN" in guard.explain(verification)
+
+    restored = guard.restore()
+
+    assert verification in restored
+    assert _mode(verification) == 0o664
 
 
 def test_restore_is_idempotent_when_no_guard_state_exists(tmp_path: Path) -> None:

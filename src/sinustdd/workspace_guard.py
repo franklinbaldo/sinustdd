@@ -35,6 +35,10 @@ class WorkspaceGuard(ABC):
         """Restrict production artifacts while RED verification is being established."""
 
     @abstractmethod
+    def enforce_green(self, verification_paths: list[str]) -> list[Path]:
+        """Freeze witnessed RED verification artifacts until the cycle completes."""
+
+    @abstractmethod
     def restore(self) -> list[Path]:
         """Restore original filesystem permissions idempotently."""
 
@@ -44,11 +48,11 @@ class WorkspaceGuard(ABC):
 
 
 class PosixPermissionGuard(WorkspaceGuard):
-    """Remove write bits from project production artifacts during RED.
+    """Materialize RED/GREEN capabilities using POSIX write bits.
 
-    Original modes are persisted under `.sinustdd/` before any chmod is applied so a
-    fresh process can restore them after a crash or agent restart. The state file is an
-    operational cursor, not causal evidence.
+    Original modes are persisted under `.sinustdd/` before chmod so a fresh
+    process can restore them after a crash or agent restart. The state file is
+    an operational cursor, not causal evidence.
     """
 
     def __init__(self, root: Path, adapter: VerificationAdapter) -> None:
@@ -58,16 +62,18 @@ class PosixPermissionGuard(WorkspaceGuard):
         self.adapter = adapter
         self.state_path = self.root / _STATE_PATH
 
-    def _load_state(self) -> dict[str, int]:
+    def _load_state(self) -> tuple[str | None, dict[str, int]]:
         if not self.state_path.is_file():
-            return {}
+            return None, {}
         raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        phase = raw.get("phase")
         modes = raw.get("original_modes", {})
-        return {str(path): int(mode) for path, mode in modes.items()}
+        normalized = {str(path): int(mode) for path, mode in modes.items()}
+        return (str(phase) if phase is not None else None), normalized
 
-    def _write_state(self, modes: dict[str, int]) -> None:
+    def _write_state(self, phase: str, modes: dict[str, int]) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"phase": "red", "original_modes": dict(sorted(modes.items()))}
+        payload = {"phase": phase, "original_modes": dict(sorted(modes.items()))}
         text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
         self.state_path.write_text(text, encoding="utf-8")
 
@@ -106,27 +112,46 @@ class PosixPermissionGuard(WorkspaceGuard):
                 production.append(path)
         return sorted(set(production))
 
-    def enforce_red(self) -> list[Path]:
-        production = self._production_files()
-        modes = self._load_state()
+    def _guard_paths(self, phase: str, paths: list[Path]) -> list[Path]:
+        modes: dict[str, int] = {}
         current_modes: dict[Path, int] = {}
-
-        for path in production:
+        for path in paths:
             relative = path.relative_to(self.root).as_posix()
             current_mode = stat.S_IMODE(path.stat().st_mode)
             current_modes[path] = current_mode
-            modes.setdefault(relative, current_mode)
+            modes[relative] = current_mode
 
         if modes:
-            self._write_state(modes)
+            self._write_state(phase, modes)
 
         for path, current_mode in current_modes.items():
             path.chmod(current_mode & ~_WRITE_MASK)
+        return sorted(current_modes)
 
-        return production
+    def enforce_red(self) -> list[Path]:
+        self.restore()
+        return self._guard_paths("red", self._production_files())
+
+    def enforce_green(self, verification_paths: list[str]) -> list[Path]:
+        self.restore()
+        verification: list[Path] = []
+        for relative in verification_paths:
+            normalized = Path(relative)
+            path = (self.root / normalized).resolve()
+            try:
+                path.relative_to(self.root)
+            except ValueError as exc:
+                raise RuntimeError(f"verification path escapes workspace: {relative}") from exc
+            if not path.is_file() or path.is_symlink():
+                continue
+            project_relative = path.relative_to(self.root).as_posix()
+            if not self.adapter.is_verification_artifact(project_relative):
+                continue
+            verification.append(path)
+        return self._guard_paths("green", verification)
 
     def restore(self) -> list[Path]:
-        modes = self._load_state()
+        _phase, modes = self._load_state()
         if not modes:
             self.state_path.unlink(missing_ok=True)
             return []
@@ -152,9 +177,15 @@ class PosixPermissionGuard(WorkspaceGuard):
         except ValueError:
             return "path is outside the guarded workspace"
 
-        if relative in self._load_state():
+        phase, modes = self._load_state()
+        if relative not in modes:
+            return f"{relative} is not currently guarded"
+        if phase == "green":
             return (
-                f"{relative} is read-only because Sinos is enforcing RED: "
-                "production stays frozen until a valid RedWitness exists"
+                f"{relative} is read-only because Sinos is enforcing GREEN: "
+                "the witnessed RED contract is frozen while production changes"
             )
-        return f"{relative} is not currently guarded"
+        return (
+            f"{relative} is read-only because Sinos is enforcing RED: "
+            "production stays frozen until a valid RedWitness exists"
+        )

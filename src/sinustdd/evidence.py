@@ -26,21 +26,21 @@ _EVIDENCE_SPEC = Path("specs/sinustddevidence.md")
 _EVIDENCE_DECLARED_SCHEMA = Path("specs/sinustddevidence.schema.sql")
 _RELATIONAL_SCHEMA = Path("okf.schema.sql")
 
-_DECLARED_SCHEMA_SQL = '''CREATE TABLE "SinusTddEvidence" (
+_DECLARED_SCHEMA_SQL = """CREATE TABLE "SinusTddEvidence" (
     schema_version BIGINT,
     cycle_id VARCHAR,
     phase VARCHAR,
     repository_ref VARCHAR,
     previous_evidence_digest VARCHAR
 );
-'''
+"""
 
-_RELATIONAL_SCHEMA_SQL = '''CREATE TABLE "SinusTddEvidence" (
+_RELATIONAL_SCHEMA_SQL = """CREATE TABLE "SinusTddEvidence" (
     cycle_id VARCHAR,
     phase VARCHAR,
     PRIMARY KEY (cycle_id, phase)
 );
-'''
+"""
 
 
 def _legacy_digest(document: dict[str, Any]) -> str:
@@ -290,7 +290,7 @@ def _verify_v2_ledger(root: Path, cycle_id: str) -> bool:
             spec_template=_SPEC_TEMPLATE,
         )
         row = con.execute(
-            '''
+            """
             WITH evidence AS (
                 SELECT
                     typed.phase,
@@ -331,7 +331,7 @@ def _verify_v2_ledger(root: Path, cycle_id: str) -> bool:
                     false
                 ) AS digest_chain_ok
             FROM ordered
-            ''',
+            """,
             [cycle_id],
         ).fetchone()
     except (duckdb.Error, RuntimeError, ValueError):
