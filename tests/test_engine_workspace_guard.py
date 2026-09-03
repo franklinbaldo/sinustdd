@@ -7,6 +7,7 @@ import pytest
 from sinustdd.adapters import PytestAdapter, TestRun
 from sinustdd.diff import DiffClassification
 from sinustdd.engine import SinusTDDEngine
+from sinustdd.models import GreenWitness, Phase
 
 
 class RecordingGuard:
@@ -85,3 +86,44 @@ def test_engine_enforces_red_after_baseline_and_green_after_red_witness(
     assert guard.enforce_red_calls == 1
     assert guard.enforce_green_calls == [["tests/test_feature.py"]]
     assert guard.restore_calls == 0
+
+
+def test_engine_restores_guard_when_cycle_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = PytestAdapter()
+    guard = RecordingGuard()
+    engine = SinusTDDEngine(tmp_path, adapter=adapter, workspace_guard=guard)
+
+    cycle = engine.store.load_active_cycle()
+    assert cycle is None
+
+    from sinustdd.models import Cycle
+
+    completed_candidate = Cycle(
+        cycle_id="cycle-complete-guard",
+        phase=Phase.GREEN,
+        baseline_commit="baseline",
+        green_witness=GreenWitness(
+            production_files_modified=["src/feature.py"],
+            test_files_hashes_verified={},
+            tests_passed=["tests/test_feature.py::test_feature"],
+        ),
+    )
+    engine.store.save_active_cycle(completed_candidate)
+    monkeypatch.setattr(engine, "_verify_ledger_integrity", lambda cycle_id: None)
+    monkeypatch.setattr(
+        adapter,
+        "run_tests",
+        lambda root, selection=None: TestRun(
+            adapter_name="pytest",
+            passed=True,
+            returncode=0,
+            output="PASSED",
+            tests_passed=["tests/test_feature.py::test_feature"],
+        ),
+    )
+
+    engine.complete()
+
+    assert guard.restore_calls == 1
