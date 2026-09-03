@@ -41,6 +41,22 @@ def test_posix_guard_makes_production_read_only_and_leaves_tests_writable(tmp_pa
     assert "RED" in guard.explain(production)
 
 
+def test_posix_guard_blocks_atomic_replace_of_guarded_production(tmp_path: Path) -> None:
+    production = tmp_path / "src" / "feature.py"
+    replacement = tmp_path / "replacement.tmp"
+    production.parent.mkdir(parents=True)
+    production.write_text("VALUE = 1\n", encoding="utf-8")
+    replacement.write_text("VALUE = 2\n", encoding="utf-8")
+
+    guard = PosixPermissionGuard(tmp_path, PytestAdapter())
+    guard.enforce_red()
+
+    with pytest.raises(PermissionError):
+        os.replace(replacement, production)
+
+    assert production.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
 def test_posix_guard_restores_original_permissions_from_persisted_state(tmp_path: Path) -> None:
     production = tmp_path / "src" / "feature.py"
     production.parent.mkdir(parents=True)
