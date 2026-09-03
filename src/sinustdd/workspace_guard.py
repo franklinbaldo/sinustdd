@@ -14,6 +14,7 @@ from sinustdd.adapters import VerificationAdapter
 
 _STATE_PATH = Path(".sinustdd/workspace-guard-state.json")
 _WRITE_MASK = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+_BACKEND_ENV = "SINUSTDD_GUARD"
 _FALLBACK_EXCLUDED_ROOTS = {
     ".git",
     ".sinustdd",
@@ -64,13 +65,17 @@ class WorkspaceGuard(ABC):
         """
         state = self.describe()
         corrupt = bool(state.get("corrupt_state"))
-        current = state.get("phase")
-
         drifted = bool(state.get("drifted"))
-        if not corrupt and not drifted and state.get("enforcing") and current == expected_phase:
+
+        if (
+            not corrupt
+            and not drifted
+            and state.get("enforcing")
+            and state.get("phase") == expected_phase
+        ):
             return {
                 "action": "consistent",
-                "phase": current,
+                "phase": state.get("phase"),
                 "recovered_from_corrupt_state": False,
                 "paths": list(state.get("guarded_paths", [])),
             }
@@ -97,17 +102,18 @@ class WorkspaceGuard(ABC):
         }
 
 
-class PosixPermissionGuard(WorkspaceGuard):
-    """Materialize RED/GREEN capabilities using POSIX write bits.
+class StatefulWorkspaceGuard(WorkspaceGuard):
+    """Shared bookkeeping for guards that persist an enforcement cursor.
 
-    Original modes are persisted under `.sinustdd/` before chmod so a fresh
-    process can restore them after a crash or agent restart. The state file is
-    an operational cursor, not causal evidence.
+    Original modes are persisted under `.sinustdd/` before any change so a fresh
+    process can reconcile after a crash or agent restart. The state file is an
+    operational cursor, not causal evidence.
     """
 
+    backend_name: str
+    enforced: bool
+
     def __init__(self, root: Path, adapter: VerificationAdapter) -> None:
-        if os.name != "posix":
-            raise OSError("PosixPermissionGuard requires a POSIX filesystem")
         self.root = root.resolve()
         self.adapter = adapter
         self.state_path = self.root / _STATE_PATH
@@ -118,15 +124,11 @@ class PosixPermissionGuard(WorkspaceGuard):
             return None, {}, False
         try:
             raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-            phase = raw.get("phase")
             modes = {str(path): int(mode) for path, mode in raw.get("original_modes", {}).items()}
+            phase = raw.get("phase")
         except (OSError, UnicodeError, ValueError, AttributeError, TypeError):
             return None, {}, True
         return (str(phase) if phase is not None else None), modes, False
-
-    def _load_state(self) -> tuple[str | None, dict[str, int]]:
-        phase, modes, _corrupt = self._read_state()
-        return phase, modes
 
     def _write_state(self, phase: str, modes: dict[str, int]) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,20 +171,40 @@ class PosixPermissionGuard(WorkspaceGuard):
                 production.append(path)
         return sorted(set(production))
 
-    def _guard_paths(self, phase: str, paths: list[Path]) -> list[Path]:
-        modes: dict[str, int] = {}
-        current_modes: dict[Path, int] = {}
-        for path in paths:
-            relative = path.relative_to(self.root).as_posix()
-            current_mode = stat.S_IMODE(path.stat().st_mode)
-            current_modes[path] = current_mode
-            modes[relative] = current_mode
+    def _witnessed_verification_files(self, verification_paths: list[str]) -> list[Path]:
+        verification: list[Path] = []
+        for relative in verification_paths:
+            path = (self.root / Path(relative)).resolve()
+            try:
+                path.relative_to(self.root)
+            except ValueError as exc:
+                raise RuntimeError(f"verification path escapes workspace: {relative}") from exc
+            if not path.is_file() or path.is_symlink():
+                continue
+            if not self.adapter.is_verification_artifact(path.relative_to(self.root).as_posix()):
+                continue
+            verification.append(path)
+        return verification
 
+    def _apply(self, path: Path, current_mode: int) -> None:
+        """Materialize the read-only capability for one path."""
+
+    def _unapply(self, path: Path, original_mode: int) -> None:
+        """Give one path its original capability back."""
+
+    def _has_drifted(self, modes: dict[str, int]) -> bool:
+        """Report whether the workspace still matches the declared enforcement."""
+        return False
+
+    def _guard_paths(self, phase: str, paths: list[Path]) -> list[Path]:
+        current_modes = {path: stat.S_IMODE(path.stat().st_mode) for path in paths}
+        modes = {
+            path.relative_to(self.root).as_posix(): mode for path, mode in current_modes.items()
+        }
         if modes:
             self._write_state(phase, modes)
-
         for path, current_mode in current_modes.items():
-            path.chmod(current_mode & ~_WRITE_MASK)
+            self._apply(path, current_mode)
         return sorted(current_modes)
 
     def enforce_red(self) -> list[Path]:
@@ -191,24 +213,10 @@ class PosixPermissionGuard(WorkspaceGuard):
 
     def enforce_green(self, verification_paths: list[str]) -> list[Path]:
         self.restore()
-        verification: list[Path] = []
-        for relative in verification_paths:
-            normalized = Path(relative)
-            path = (self.root / normalized).resolve()
-            try:
-                path.relative_to(self.root)
-            except ValueError as exc:
-                raise RuntimeError(f"verification path escapes workspace: {relative}") from exc
-            if not path.is_file() or path.is_symlink():
-                continue
-            project_relative = path.relative_to(self.root).as_posix()
-            if not self.adapter.is_verification_artifact(project_relative):
-                continue
-            verification.append(path)
-        return self._guard_paths("green", verification)
+        return self._guard_paths("green", self._witnessed_verification_files(verification_paths))
 
     def restore(self) -> list[Path]:
-        _phase, modes = self._load_state()
+        _phase, modes, _corrupt = self._read_state()
         if not modes:
             self.state_path.unlink(missing_ok=True)
             return []
@@ -222,7 +230,7 @@ class PosixPermissionGuard(WorkspaceGuard):
                 raise RuntimeError(f"guard state escapes workspace: {relative}") from exc
             if not path.exists() or path.is_symlink():
                 continue
-            path.chmod(mode)
+            self._unapply(path, mode)
             restored.append(path)
 
         self.state_path.unlink(missing_ok=True)
@@ -231,13 +239,55 @@ class PosixPermissionGuard(WorkspaceGuard):
     def describe(self) -> dict[str, Any]:
         phase, modes, corrupt = self._read_state()
         return {
-            "backend": "posix-permissions",
+            "backend": self.backend_name,
             "phase": phase,
             "enforcing": bool(modes),
+            "enforced": self.enforced and bool(modes),
             "guarded_paths": sorted(modes),
             "corrupt_state": corrupt,
             "drifted": self._has_drifted(modes),
         }
+
+    def _phase_reason(self, relative: str, phase: str | None) -> str:
+        if phase == "green":
+            return (
+                f"{relative} is read-only because Sinos is enforcing GREEN: "
+                "the witnessed RED contract is frozen while production changes"
+            )
+        return (
+            f"{relative} is read-only because Sinos is enforcing RED: "
+            "production stays frozen until a valid RedWitness exists"
+        )
+
+    def explain(self, path: Path) -> str:
+        candidate = path if path.is_absolute() else self.root / path
+        try:
+            relative = candidate.resolve().relative_to(self.root).as_posix()
+        except ValueError:
+            return "path is outside the guarded workspace"
+
+        phase, modes, _corrupt = self._read_state()
+        if relative not in modes:
+            return f"{relative} is not currently guarded"
+        return self._phase_reason(relative, phase)
+
+
+class PosixPermissionGuard(StatefulWorkspaceGuard):
+    """Materialize RED/GREEN capabilities using POSIX write bits."""
+
+    backend_name = "posix-permissions"
+    enforced = True
+
+    def __init__(self, root: Path, adapter: VerificationAdapter) -> None:
+        if os.name != "posix":
+            raise OSError("PosixPermissionGuard requires a POSIX filesystem")
+        super().__init__(root, adapter)
+
+    def _apply(self, path: Path, current_mode: int) -> None:
+        path.chmod(current_mode & ~_WRITE_MASK)
+
+    def _unapply(self, path: Path, original_mode: int) -> None:
+        path.chmod(original_mode)
 
     def _has_drifted(self, modes: dict[str, int]) -> bool:
         """Report whether any recorded path lost the read-only capability on disk."""
@@ -249,33 +299,40 @@ class PosixPermissionGuard(WorkspaceGuard):
                 return True
         return False
 
-    def explain(self, path: Path) -> str:
-        candidate = path if path.is_absolute() else self.root / path
-        try:
-            relative = candidate.resolve().relative_to(self.root).as_posix()
-        except ValueError:
-            return "path is outside the guarded workspace"
 
-        phase, modes = self._load_state()
-        if relative not in modes:
-            return f"{relative} is not currently guarded"
-        if phase == "green":
-            return (
-                f"{relative} is read-only because Sinos is enforcing GREEN: "
-                "the witnessed RED contract is frozen while production changes"
-            )
+class AdvisoryGuard(StatefulWorkspaceGuard):
+    """Declare RED/GREEN capabilities where the filesystem cannot enforce them.
+
+    Windows ACLs and sandboxed mounts do not honor POSIX write bits, so this backend
+    keeps the same causal bookkeeping and explanations without pretending to enforce.
+    The engine's diff invariants remain the binding constraint.
+    """
+
+    backend_name = "advisory"
+    enforced = False
+
+    def _phase_reason(self, relative: str, phase: str | None) -> str:
         return (
-            f"{relative} is read-only because Sinos is enforcing RED: "
-            "production stays frozen until a valid RedWitness exists"
+            f"{super()._phase_reason(relative, phase)} "
+            "(advisory backend: not enforced by the filesystem, "
+            "but edits here will be rejected as a phase invariant violation)"
         )
 
 
 def get_workspace_guard(root: Path, adapter: VerificationAdapter) -> WorkspaceGuard | None:
-    """Select the enforcement backend available for this workspace.
+    """Select the enforcement backend for this workspace.
 
-    Returns None where no backend can materialize capabilities, so callers stay
-    honest about enforcement instead of pretending a no-op guard enforces.
+    `SINUSTDD_GUARD` overrides the default with `posix`, `advisory`, or `off`.
     """
+    requested = os.environ.get(_BACKEND_ENV, "").strip().lower()
+    if requested == "off":
+        return None
+    if requested == "advisory":
+        return AdvisoryGuard(root, adapter)
+    if requested == "posix":
+        return PosixPermissionGuard(root, adapter)
+    if requested:
+        raise ValueError(f"unknown workspace guard backend: {requested}")
     if os.name == "posix":
         return PosixPermissionGuard(root, adapter)
-    return None
+    return AdvisoryGuard(root, adapter)
