@@ -36,7 +36,7 @@ class WorkspaceGuard(ABC):
 
     @abstractmethod
     def enforce_green(self, verification_paths: list[str]) -> list[Path]:
-        """Freeze the witnessed RED verification artifacts while GREEN is implemented."""
+        """Freeze witnessed RED verification artifacts until the cycle completes."""
 
     @abstractmethod
     def restore(self) -> list[Path]:
