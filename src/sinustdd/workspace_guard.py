@@ -273,7 +273,13 @@ class StatefulWorkspaceGuard(WorkspaceGuard):
 
 
 class PosixPermissionGuard(StatefulWorkspaceGuard):
-    """Materialize RED/GREEN capabilities using POSIX write bits."""
+    """Materialize RED/GREEN capabilities using POSIX write bits.
+
+    A file's write bits alone do not protect its directory entry: POSIX rename and
+    unlink authority lives on the parent directory. Therefore this backend guards
+    each protected file and its immediate parent directory. This deliberately
+    narrows directory mutation capability while a causal contract is frozen.
+    """
 
     backend_name = "posix-permissions"
     enforced = True
@@ -283,6 +289,11 @@ class PosixPermissionGuard(StatefulWorkspaceGuard):
             raise OSError("PosixPermissionGuard requires a POSIX filesystem")
         super().__init__(root, adapter)
 
+    def _guard_paths(self, phase: str, paths: list[Path]) -> list[Path]:
+        protected = set(paths)
+        protected.update(path.parent for path in paths if path.parent != self.root)
+        return super()._guard_paths(phase, sorted(protected))
+
     def _apply(self, path: Path, current_mode: int) -> None:
         path.chmod(current_mode & ~_WRITE_MASK)
 
@@ -290,10 +301,10 @@ class PosixPermissionGuard(StatefulWorkspaceGuard):
         path.chmod(original_mode)
 
     def _has_drifted(self, modes: dict[str, int]) -> bool:
-        """Report whether any recorded path lost the read-only capability on disk."""
+        """Report whether any recorded file or directory became writable or vanished."""
         for relative in modes:
             path = self.root / relative
-            if not path.is_file():
+            if not path.exists() or path.is_symlink():
                 return True
             if stat.S_IMODE(path.stat().st_mode) & _WRITE_MASK:
                 return True
