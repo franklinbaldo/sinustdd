@@ -73,6 +73,10 @@ sinustdd refactor        # Allow structural refactoring while preserving 100% gr
 sinustdd complete        # Seal Cycle N with complete audit trail
 sinustdd status          # View current harmonic phase and witnesses
 sinustdd serve           # Start FastMCP server over stdio
+
+sinustdd guard status    # Show which paths the current phase freezes
+sinustdd guard explain FILE   # Explain why a path is read-only right now
+sinustdd guard recover   # Reconcile permissions with the active cycle after a crash
 ```
 
 ### FastMCP Tools
@@ -82,6 +86,23 @@ sinustdd serve           # Start FastMCP server over stdio
 - `sinustdd_green()`: Validate green transition.
 - `sinustdd_refactor()`: Transition to refactor phase.
 - `sinustdd_complete()`: Finalize cycle and seal proof.
+- `sinustdd_guard_status()`: Report the enforced phase and guarded paths (`readOnlyHint=True`).
+- `sinustdd_guard_explain(path)`: Explain why a path is read-only (`readOnlyHint=True`).
+- `sinustdd_guard_recover()`: Re-materialize the capabilities of the active cycle phase.
+
+### Workspace guard backends
+
+The guard materializes phase capabilities in the working tree: production is read-only
+during RED, and the witnessed RED contract is read-only during GREEN.
+
+| Backend | Selected when | Enforcement |
+| --- | --- | --- |
+| `posix-permissions` | POSIX filesystem (default) | Clears write bits, restoring original modes on completion |
+| `advisory` | Windows or sandboxed mounts | Declares and explains the freeze; the engine's diff invariants stay binding |
+
+Set `SINUSTDD_GUARD` to `posix`, `advisory`, or `off` to override the default.
+Enforcement state lives in `.sinustdd/workspace-guard-state.json` and is an operational
+cursor, not causal evidence: `sinustdd guard recover` rebuilds it from the active cycle.
 
 ---
 
